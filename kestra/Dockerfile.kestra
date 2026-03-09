@@ -1,0 +1,23 @@
+# # Dockerfile.kestra
+# FROM kestra/kestra:latest
+
+# # Installer pip et les dépendances Python
+# USER root
+
+# #hi
+# RUN apt-get update && \
+#     apt-get install -y python3-pip && \
+#     pip3 install --no-cache-dir pandas openpyxl "duckdb[excel]" && \
+#     python3 -c "import duckdb; duckdb.sql('INSTALL excel; LOAD excel;')"
+
+
+    # Dockerfile.kestra
+FROM kestra/kestra:latest
+
+# Passer en root pour installer les dépendances
+USER root
+
+# Mettre à jour les packages et installer Python3 + pip
+RUN apt-get update && \
+    apt-get install -y python3 python3-pip && \
+    pip3 install --no-cache-dir pandas numpy requests openrouteservice python-dateutil sqlalchemy psycopg2-binary Faker
