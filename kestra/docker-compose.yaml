@@ -9,6 +9,9 @@ services:
     image: postgres:18
     volumes:
       - postgres-data-projet12:/var/lib/postgresql
+    ports:
+      # - "5432:5432"
+      - "5433:5432"
     environment:
       POSTGRES_DB: kestra
       POSTGRES_USER: kestra
