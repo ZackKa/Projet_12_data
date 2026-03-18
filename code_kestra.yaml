@@ -273,3 +273,175 @@ tasks:
 
         if result.returncode != 0:
             raise Exception("Le test pytest a échoué")
+
+  - id: create_rh_enriched_table
+    type: io.kestra.plugin.jdbc.postgresql.Query
+    url: jdbc:postgresql://postgres:5432/kestra
+    username: kestra
+    password: k3str4
+    sql: |
+
+      CREATE TABLE IF NOT EXISTS poc_employees_enriched (
+        id_salarie INTEGER,
+        nom TEXT,
+        prenom TEXT,
+        adresse TEXT,
+        moyen_deplacement TEXT,
+        distance_km FLOAT,
+        declaration_valide BOOLEAN
+      );
+
+  - id: distances_domicile_travail
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    script: |
+      import pandas as pd
+      import requests
+      import time
+      import os
+      from sqlalchemy import create_engine
+
+      API_KEY = os.getenv("ORS_API_KEY")
+
+      entreprise = "1362 Av. des Platanes, 34970 Lattes"
+
+      print("Connexion à PostgreSQL...")
+      engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
+
+      print("Lecture des données RH...")
+      df = pd.read_sql("SELECT * FROM poc_rh_raw", engine)
+
+      print("Lecture des paramètres...")
+      params = pd.read_sql("SELECT * FROM poc_config_parameters", engine)
+
+      param_dict = dict(zip(params["param_name"], params["value"]))
+
+      max_walk_km = param_dict["max_walk_km"]
+      max_bike_km = param_dict["max_bike_km"]
+
+      print("Paramètres chargés :")
+      print("max_walk_km =", max_walk_km)
+      print("max_bike_km =", max_bike_km)
+
+      print(f"{len(df)} salariés à traiter")
+
+      cache = {}
+
+      def geocode(adresse, retries=3):
+
+          if adresse in cache:
+              return cache[adresse]
+
+          url = "https://api.openrouteservice.org/geocode/search"
+          params = {"api_key": API_KEY, "text": adresse}
+
+          for i in range(retries):
+
+              try:
+                  r = requests.get(url, params=params).json()
+
+                  time.sleep(0.2)   # pause API
+
+                  if r["features"]:
+                      coords = r["features"][0]["geometry"]["coordinates"]
+                      result = (coords[1], coords[0])
+                      cache[adresse] = result
+                      return result
+
+              except Exception as e:
+                  print(f"Erreur géocodage {adresse} tentative {i+1}: {e}")
+                  time.sleep(2)
+
+          return (None, None)
+
+
+      print("Géocodage de l'adresse de l'entreprise...")
+
+      lat_ent, lon_ent = geocode(entreprise)
+
+      if lat_ent is None:
+          raise Exception("Impossible de géocoder l'adresse de l'entreprise")
+
+      print(f"Coordonnées entreprise : {lat_ent}, {lon_ent}")
+
+
+      def distance(adresse):
+
+          lat1, lon1 = geocode(adresse)
+
+          if None in [lat1, lon1, lat_ent, lon_ent]:
+              return None
+
+          url = "https://api.openrouteservice.org/v2/directions/driving-car"
+          headers = {"Authorization": API_KEY}
+          body = {"coordinates": [[lon1, lat1], [lon_ent, lat_ent]]}
+
+          for i in range(3):
+
+              try:
+                  r = requests.post(url, json=body, headers=headers).json()
+
+                  time.sleep(0.2)   # pause API
+
+                  if "routes" in r:
+                      return r["routes"][0]["summary"]["distance"] / 1000
+
+              except Exception as e:
+                  print(f"Erreur distance tentative {i+1}: {e}")
+                  time.sleep(2)
+
+          return None
+
+
+      rows = []
+
+      print("Calcul des distances domicile-travail...")
+
+      for i, row in df.iterrows():
+
+          if i % 10 == 0:
+              print(f"{i} salariés traités...")
+
+          dist_km = None
+          valide = False
+
+          try:
+
+              dist_km = distance(row["adresse"])
+
+              transport = str(row["moyen_deplacement"]).lower()
+
+              if "marche" in transport or "running" in transport:
+                  valide = dist_km is not None and dist_km <= max_walk_km
+
+              elif "vélo" in transport or "trottinette" in transport:
+                  valide = dist_km is not None and dist_km <= max_bike_km
+
+          except Exception as e:
+              print(f"Erreur pour salarié {row['id_salarie']} : {e}")
+
+          rows.append({
+              "id_salarie": row["id_salarie"],
+              "nom": row["nom"],
+              "prenom": row["prenom"],
+              "adresse": row["adresse"],
+              "moyen_deplacement": row["moyen_deplacement"],
+              "distance_km": dist_km,
+              "declaration_valide": valide
+          })
+
+
+      print("Transformation en DataFrame final...")
+      df_out = pd.DataFrame(rows)
+
+      print("Insertion dans PostgreSQL...")
+
+      df_out.to_sql(
+          "poc_employees_enriched",
+          engine,
+          if_exists="replace",
+          index=False
+      )
+
+      print("Toutes les distances calculées et table mise à jour")
