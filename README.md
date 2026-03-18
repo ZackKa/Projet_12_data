@@ -61,6 +61,7 @@ Ce Proof of Concept vise à :
 
 #### Le pipeline suit une architecture en plusieurs couches :
 
+```text
 [Sources Excel]
         ↓
 [Ingestion Kestra]
@@ -76,6 +77,7 @@ Ce Proof of Concept vise à :
 [MART (tables métiers)]
         ↓
 [PowerBI Dashboard]
+```
 
 Monitoring :
 - Logs Kestra
