@@ -445,3 +445,165 @@ tasks:
       )
 
       print("Toutes les distances calculées et table mise à jour")
+  
+  - id: create_sport_activity_table
+    type: io.kestra.plugin.jdbc.postgresql.Queries
+    url: jdbc:postgresql://postgres:5432/kestra
+    username: kestra
+    password: k3str4
+    sql: |
+
+      CREATE TABLE IF NOT EXISTS poc_sport_activity (
+          id_activite SERIAL PRIMARY KEY,
+          id_salarie INTEGER,
+          date_debut TIMESTAMP,
+          type_sport TEXT,
+          distance_m INTEGER,
+          duree_min INTEGER,
+          commentaire TEXT
+      );
+        
+  - id: generate_sport_activity
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    script: |
+      import pandas as pd
+      import random
+      from datetime import datetime, timedelta
+      from sqlalchemy import create_engine
+      from faker import Faker
+
+      # Initialisation Faker
+      fake = Faker("fr_FR")
+
+      print("Connexion PostgreSQL...")
+      engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
+
+      print("Lecture des salariés sportifs...")
+      df = pd.read_sql("SELECT * FROM poc_sportive_raw WHERE sport IS NOT NULL", engine)
+
+      activities = []
+      today = datetime.now()
+
+      sports_distance = ["runing","randonnée","vélo","triathlon","natation"]
+
+      moods = [
+          "Motivation au top",
+          "Super sensations",
+          "Fatigué mais content",
+          "Belle sortie",
+          "Très bonne énergie"
+      ]
+
+      weather = [
+          "Sous le soleil",
+          "Malgré la pluie",
+          "Avec un peu de vent",
+          "Temps parfait pour le sport"
+      ]
+
+      print("Génération des activités...")
+
+      for _, row in df.iterrows():
+          id_salarie = row["id_salarie"]
+          sport = row["sport"]
+          sport_lower = sport.lower()
+          nb_activities = random.randint(5, 30)
+
+          for _ in range(nb_activities):
+              # Date et heure aléatoires
+              random_days = random.randint(0, 365)
+              date = today - timedelta(days=random_days)
+              hour = random.randint(6, 21)
+              minute = random.randint(0, 59)
+              date_debut = date.replace(hour=hour, minute=minute, second=0)
+
+              distance_m = None
+              duree_min = random.randint(5, 120)
+
+              # Si sport avec distance, générer distance réaliste et ajuster durée
+              if sport_lower in sports_distance:
+                  if sport_lower == "runing":
+                      distance_m = random.randint(3000, 15000)
+                  elif sport_lower == "randonnée":
+                      distance_m = random.randint(5000, 25000)
+                  elif sport_lower == "vélo":
+                      distance_m = random.randint(5000, 80000)
+                  elif sport_lower == "triathlon":
+                      distance_m = random.randint(30000, 70000)
+                  elif sport_lower == "natation":
+                      distance_m = random.randint(500, 3000)
+                  duree_min = int(distance_m / 200)
+
+              # Décider aléatoirement s'il y a un commentaire (30% des cas = aucun)
+              if random.random() < 0.3:
+                  commentaire = None
+              else:
+                  # Choisir un template selon distance/durée
+                  if distance_m:
+                      km = distance_m / 1000
+                      if km < 3:
+                          template = fake.random_element([
+                              "Petite sortie de {sport} : {distance:.1f} km en {duree} min. 💪",
+                              "{distance:.1f} km de {sport} parcourus rapidement en {duree} min. 😎"
+                          ])
+                      elif km < 10:
+                          template = fake.random_element([
+                              "Séance de {sport} de {distance:.1f} km en {duree} min. 🔥",
+                              "Super {sport} aujourd'hui : {distance:.1f} km en {duree} min ! ⚡"
+                          ])
+                      else:
+                          template = fake.random_element([
+                              "Grosse sortie de {sport} : {distance:.1f} km en {duree} min. 🏅",
+                              "Performance record : {distance:.1f} km de {sport} en {duree} min ! 💪"
+                          ])
+                      commentaire = template.format(sport=sport_lower, distance=km, duree=duree_min)
+                  else:
+                      # Sports sans distance
+                      if duree_min < 20:
+                          template = fake.random_element([
+                              "Petite séance de {sport} pendant {duree} min. 💪",
+                              "Courte séance de {sport} de {duree} min. 😃"
+                          ])
+                      elif duree_min < 60:
+                          template = fake.random_element([
+                              "Bonne séance de {sport} : {duree} min bien efficaces. 🔥",
+                              "{duree} min de {sport}, super séance ! ⚡"
+                          ])
+                      else:
+                          template = fake.random_element([
+                              "Grosse séance de {sport} : {duree} min d'effort intense ! 🏅",
+                              "Longue séance de {sport} pendant {duree} min, top performance ! 💪"
+                          ])
+                      commentaire = template.format(sport=sport_lower, duree=duree_min)
+
+                  # Ajouter mood et météo seulement si commentaire existe
+                  commentaire += f" {fake.random_element(moods)}. {fake.random_element(weather)}."
+
+              activities.append({
+                  "id_salarie": id_salarie,
+                  "date_debut": date_debut,
+                  "type_sport": sport,
+                  "distance_m": distance_m,
+                  "duree_min": duree_min,
+                  "commentaire": commentaire
+              })
+
+      df_out = pd.DataFrame(activities)
+
+      print(f"{len(df_out)} activités générées")
+
+      # Supprimer les anciennes données
+      with engine.begin() as conn:
+          conn.exec_driver_sql("TRUNCATE TABLE poc_sport_activity RESTART IDENTITY;")
+
+      # Insérer les nouvelles données
+      df_out.to_sql(
+          "poc_sport_activity",
+          engine,
+          if_exists="append",
+          index=False
+      )
+
+      print("Insertion terminée")
