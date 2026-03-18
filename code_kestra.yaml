@@ -1,0 +1,275 @@
+id: pipeline_sport_p12
+namespace: sport_data_solution
+
+description: >
+  Pipeline d'automatisation pour le calcul des primes et des jours de congés pour les employés sportifs.
+
+tasks:
+  - id: start
+    type: io.kestra.plugin.core.log.Log
+    message: "Démarrage du workflow Sport Data Solution"
+
+  - id: ingestion_all
+    type: io.kestra.plugin.scripts.shell.Commands     # On utilise le plugin "shell.Commands" pour lancer des commandes Linux
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process     # Le runner PROCESS exécute les commandes directement sur le système contrairement a DOCKER qui execute sur docker
+    retry:
+      type: constant
+      maxAttempt: 3
+      interval: PT30S
+    commands:
+      - mkdir -p data       # Création du dossier "data", -p évite une erreur si le dossier existe
+      - cp /data/sport_data_solution/Donnees_RH.xlsx data/rh.xlsx     # Copie du fichier Rh depuis le répertoire source vers le dossier de travail
+      - cp /data/sport_data_solution/Donnees_Sportive.xlsx data/sportive.xlsx     # Copie du fichier sportive
+      - echo "Taille des fichiers :"      # Affichage d’un message pour la lisibilité des logs
+      - echo "$(ls -lh data/)"            # Affiche les fichiers avec leur taille pour vérifier qu'ils ont bien été copiés
+    outputFiles:
+      - data/rh.xlsx       # Déclaration des fichiers de sortie, Kestra pourra les réutiliser dans les tasks suivantes
+      - data/sportive.xlsx
+
+  - id: check_data
+    type: io.kestra.plugin.scripts.python.Script    # Utilisation d’un script Python
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    inputFiles:
+      rh.xlsx: "{{ outputs.ingestion_all.outputFiles['data/rh.xlsx'] }}"        # Fichiers d’entrée récupérés depuis l’étape "ingestion_all"
+      sportive.xlsx: "{{ outputs.ingestion_all.outputFiles['data/sportive.xlsx'] }}"        # Kestra injecte les fichiers dans le répertoire de travail du script
+    # Script Python exécuté par la tâche
+    script: |
+      import pandas as pd 
+      from pathlib import Path
+
+      # Dictionnaire des fichiers, Chaque fichier reçoit un nom logique pour simplifier leur traitement.
+      files = {
+          "RH": Path("rh.xlsx"),
+          "SPORTIVE": Path("sportive.xlsx"),
+      }
+
+      # Parcours et analyse simple
+      for name, path in files.items():
+          print(f"\n===== {name} =====")    # Affiche le nom du fichier
+          print("Path:", path.resolve())    # Affiche le chemin absolu du fichier
+
+          # Lecture du fichier Excel, Boucle sur chaque élément du dictionnaire (chaque fichier)
+          df = pd.read_excel(path)
+
+          # Affichage des 5 premières lignes
+          print("\n--- HEAD ---")
+          print(df.head())
+
+          # Affichage de la structure
+          print("\n--- STRUCTURE ---")
+          print(df.info())
+
+          # Valeurs manquantes
+          print("\n--- VALEURS MANQUANTES ---")
+          print(df.isnull().sum())
+
+          # Doublons
+          print("\n--- DOUBLONS ---")
+          print(df.duplicated().sum())
+
+  - id: create_config_parameters
+    type: io.kestra.plugin.jdbc.postgresql.Queries
+    url: jdbc:postgresql://postgres:5432/kestra
+    username: kestra
+    password: k3str4
+    sql: |
+
+      CREATE TABLE IF NOT EXISTS poc_config_parameters (
+        param_name TEXT PRIMARY KEY,
+        value FLOAT
+      );
+
+      DELETE FROM poc_config_parameters;
+
+      INSERT INTO poc_config_parameters (param_name, value) VALUES
+      ('prime_rate', 0.05),
+      ('min_activities', 15),
+      ('max_walk_km', 15),
+      ('max_bike_km', 25);
+
+  - id: create_raw_tables
+    type: io.kestra.plugin.jdbc.postgresql.Queries
+    url: jdbc:postgresql://postgres:5432/kestra
+    username: kestra
+    password: k3str4
+    sql: |
+
+      CREATE TABLE IF NOT EXISTS poc_rh_raw (
+        id_salarie INTEGER,
+        nom TEXT,
+        prenom TEXT,
+        date_naissance DATE,
+        bu TEXT,
+        date_embauche DATE,
+        salaire_brut INTEGER,
+        type_contrat TEXT,
+        nb_cp INTEGER,
+        adresse TEXT,
+        moyen_deplacement TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS poc_sportive_raw (
+        id_salarie INTEGER,
+        sport TEXT
+      );
+          
+  - id: load_raw_tables
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    inputFiles:
+      rh.xlsx: "{{ outputs.ingestion_all.outputFiles['data/rh.xlsx'] }}"
+      sportive.xlsx: "{{ outputs.ingestion_all.outputFiles['data/sportive.xlsx'] }}"
+    script: |
+      import pandas as pd
+      from sqlalchemy import create_engine
+
+      # connexion postgres
+      engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
+
+      # lecture fichiers
+      df_rh = pd.read_excel("rh.xlsx")
+      df_sport = pd.read_excel("sportive.xlsx")
+
+      # renommage colonnes pour correspondre aux tables SQL
+      df_rh.columns = [
+          "id_salarie",
+          "nom",
+          "prenom",
+          "date_naissance",
+          "bu",
+          "date_embauche",
+          "salaire_brut",
+          "type_contrat",
+          "nb_cp",
+          "adresse",
+          "moyen_deplacement"
+      ]
+
+      df_sport.columns = [
+          "id_salarie",
+          "sport"
+      ]
+
+      print("RH rows:", len(df_rh))
+      print("SPORT rows:", len(df_sport))
+
+      # insertion dans postgres if_exists="replace" pour remplacer et if_exists="append" pour ajouter
+      df_rh.to_sql("poc_rh_raw", engine, if_exists="replace", index=False)
+      df_sport.to_sql("poc_sportive_raw", engine, if_exists="replace", index=False)
+
+      print("Insertion terminée")
+
+
+  - id: test_poc_rh_raw
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+        type: io.kestra.plugin.core.runner.Process
+    script: |
+        import pytest
+        import pandas as pd
+        from sqlalchemy import create_engine
+        import sys
+        import subprocess
+
+        test_code = '''import pandas as pd
+        from sqlalchemy import create_engine
+
+        def test_poc_rh_raw():
+            engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
+            df = pd.read_sql("SELECT * FROM poc_rh_raw", engine)
+            
+            errors = []
+
+            # Valeurs manquantes
+            missing = df.isnull().sum()
+            if missing.sum() > 0:
+                print("Valeurs manquantes détectées :")
+                print(missing[missing > 0])
+                errors.append(f"Valeurs manquantes: {missing[missing > 0].to_dict()}")
+
+            # Doublons
+            duplicates = df.duplicated()
+            if duplicates.sum() > 0:
+                print("Doublons détectés :")
+                print(df[duplicates])
+                errors.append(f"Doublons: {duplicates.sum()}")
+            
+            # Salaire positif
+            invalid_salaire = df[df["salaire_brut"] <= 0]
+            if not invalid_salaire.empty:
+                print("Salaire négatif ou nul détecté :")
+                print(invalid_salaire)
+                errors.append("salaire_brut ≤ 0")
+
+            # Nombre de congés positif ou égal à 0
+            invalid_cp = df[df["nb_cp"] < 0]
+            if not invalid_cp.empty:
+                print("Nombre de congés négatif détecté :")
+                print(invalid_cp)
+                errors.append("nb_cp < 0")
+
+            # Cohérence des dates : naissance ≤ date_embauche - 18 ans
+            invalid_dates = df[
+                pd.to_datetime(df["date_naissance"]).dt.date > (pd.to_datetime(df["date_embauche"]).dt.date - pd.to_timedelta(18*365, unit='d'))
+            ]
+            if not invalid_dates.empty:
+                print("Incohérence de dates (âge < 18 ans à l'embauche) détectée :")
+                print(invalid_dates)
+                errors.append("date_naissance trop récente / âge < 18 ans à l'embauche")
+
+            assert not errors, f"Tests échoués : {errors}"'''
+
+        with open("tmp_test_poc_rh_raw.py", "w") as f:
+            f.write(test_code)
+
+        result = subprocess.run([sys.executable, "-m", "pytest", "tmp_test_poc_rh_raw.py", "-v"], check=False)
+
+        if result.returncode != 0:
+            raise Exception("Le test pytest a échoué")
+
+  - id: test_poc_sportive_raw
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+        type: io.kestra.plugin.core.runner.Process
+    script: |
+        import pytest
+        import pandas as pd
+        from sqlalchemy import create_engine
+        import sys
+        import subprocess
+
+        test_code = '''import pandas as pd
+        from sqlalchemy import create_engine
+
+        def test_poc_sportive_raw():
+            engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
+            df = pd.read_sql("SELECT * FROM poc_sportive_raw", engine)
+            
+            errors = []
+
+            # id_salarie non NULL
+            invalid_id = df[df["id_salarie"].isnull()]
+            if not invalid_id.empty:
+                print("id_salarie NULL détecté :")
+                print(invalid_id)
+                errors.append("id_salarie NULL")
+
+            # Doublons
+            duplicates = df.duplicated()
+            if duplicates.sum() > 0:
+                print("Doublons détectés :")
+                print(df[duplicates])
+                errors.append(f"Doublons: {duplicates.sum()}")
+
+            assert not errors, f"Tests échoués : {errors}"'''
+
+        with open("tmp_test_poc_sportive_raw.py", "w") as f:
+            f.write(test_code)
+
+        result = subprocess.run([sys.executable, "-m", "pytest", "tmp_test_poc_sportive_raw.py", "-v"], check=False)
+
+        if result.returncode != 0:
+            raise Exception("Le test pytest a échoué")

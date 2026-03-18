@@ -39,8 +39,9 @@ services:
       - kestra-data-projet12:/app/storage
       - /var/run/docker.sock:/var/run/docker.sock
       - /tmp/kestra-wd:/tmp/kestra-wd
-      # - C:/Users/zakar_2tvurct/Desktop/Formation_Data_Engineer/Projet_10/projet_10/bottleneck:/data/bottleneck
       - C:/Users/zakar_2tvurct/Desktop/Formation_Data_Engineer/Projet_12/Projet_12/sport_data_solution:/data/sport_data_solution
+    env_file:
+        - ../.env
     environment:
       KESTRA_CONFIGURATION: |
         datasources:

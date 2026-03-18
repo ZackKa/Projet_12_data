@@ -1,1 +1,5 @@
 activite_generer.py
+k_flow
+.env
+__pycache__/
+*.pyc

@@ -106,16 +106,17 @@ Le Dockerfile personnalisé installe Python 3 et les librairies nécessaires pou
 
 Le workflow Kestra est organisé pour automatiser l’ensemble du POC, de l’ingestion à la simulation des activités sportives.
 
-Task ID	Type	Description
-start	Log	Début du workflow et journalisation.
-ingestion_all	Shell Commands	Création du dossier de travail et copie des fichiers RH et sportives.
-check_data	Python Script	Vérification des fichiers importés : lecture, structure, doublons, valeurs manquantes.
-create_raw_tables	PostgreSQL Queries	Création des tables RAW : poc_rh_raw et poc_sportive_raw.
-load_raw_tables	Python Script	Lecture des fichiers Excel et insertion dans les tables RAW PostgreSQL.
-create_rh_enriched_table	PostgreSQL Query	Création de la table poc_employees_enriched pour les données enrichies.
-distances_domicile_travail	Python Script	Calcul des distances domicile-travail via OpenRouteService et validation des déclarations.
-create_sport_activity_table	PostgreSQL Query	Création de la table poc_sport_activity pour stocker les activités sportives simulées.
-generate_sport_activity	Python Script	Génération aléatoire et réaliste de plusieurs activités sportives par salarié avec commentaires.
+| Task ID                        | Description                                                                 |
+|--------------------------------|-----------------------------------------------------------------------------|
+| **start**                      | Début du workflow et journalisation.                                        |
+| **ingestion_all**              | Création du dossier de travail et copie des fichiers RH et sportives.       |
+| **check_data**                 | Vérification des fichiers importés : lecture, structure, doublons, valeurs manquantes. |
+| **create_raw_tables**          | Création des tables RAW : poc_rh_raw et poc_sportive_raw.                   |
+| **load_raw_tables**            | Lecture des fichiers Excel et insertion dans les tables RAW PostgreSQL.     |
+| **create_rh_enriched_table**   | Création de la table poc_employees_enriched pour les données enrichies.     |
+| **distances_domicile_travail** | Calcul des distances domicile-travail via OpenRouteService et validation des déclarations. |
+| **create_sport_activity_table**| Création de la table poc_sport_activity pour stocker les activités sportives simulées. |
+| **generate_sport_activity**    | Génération aléatoire et réaliste de plusieurs activités sportives par salarié avec commentaires. |
 
 Chaque tâche est indépendante et réutilisable, avec logs et vérifications pour faciliter le debug et le monitoring.
 
