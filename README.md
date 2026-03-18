@@ -118,10 +118,10 @@ Le Dockerfile personnalisé installe Python 3 et les librairies nécessaires pou
 
 ## 6. Variables d’environnement
 
-Le projet utilise une clé API pour le calcul des distances et un webhook slack pour l'envoie des messages :
+Le projet utilise une clé API pour le calcul des distances et un webhook slack pour l'envoie des messages. Vous devez créer un .env a la racine du projet avec :
 
-`ORS_API_KEY`
-`SLACK_WEBHOOK`
+`ORS_API_KEY=*******`
+`SLACK_WEBHOOK=*******`
 
 
 ## 7. Organisation des données
@@ -288,10 +288,9 @@ docker-compose up -d
 
 4. Importer le workflow pipeline_sport_p12 dans Kestra.
 
-5. **!!! Pensez à mettre votre clé api. Vous pouvez en créer une sur le site de openrouteservice. Ainsi que votre Slack webhook créer sur slack pour recevoir les message**
+5. **!!! Pensez à mettre votre clé api dans un fichier .env à la racine du projet. Vous pouvez en créer une sur le site de openrouteservice. Ainsi que votre Slack webhook créer sur slack pour recevoir les message**
 
 6. Exécuter le workflow et suivre les logs pour validation.
-
 
 ## Notes techniques
 
