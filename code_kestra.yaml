@@ -607,3 +607,222 @@ tasks:
       )
 
       print("Insertion terminée")
+
+  - id: create_sport_activity_clean_table
+    type: io.kestra.plugin.jdbc.postgresql.Queries
+    url: jdbc:postgresql://postgres:5432/kestra
+    username: kestra
+    password: k3str4
+    sql: |
+
+      DROP TABLE IF EXISTS poc_sport_activity_clean;
+
+      CREATE TABLE poc_sport_activity_clean AS
+
+      SELECT
+        id_activite,
+        id_salarie,
+        date_debut,
+        type_sport,
+        distance_m,
+        duree_min,
+        commentaire
+
+      FROM poc_sport_activity
+
+      WHERE
+        id_salarie IS NOT NULL
+        AND type_sport IS NOT NULL
+        AND duree_min > 0
+        AND (distance_m IS NULL OR distance_m >= 0)
+        AND date_debut::date <= CURRENT_DATE
+        AND date_debut::date >= (CURRENT_DATE - INTERVAL '1 year')::date;
+
+  - id: test_poc_sport_activity_clean
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+        type: io.kestra.plugin.core.runner.Process
+    script: |
+        import pytest
+        import pandas as pd
+        from sqlalchemy import create_engine
+        from datetime import datetime
+        from dateutil.relativedelta import relativedelta
+        import sys
+        import subprocess
+
+        # Création d'un fichier temporaire pour le test pytest
+        test_code = '''import pandas as pd
+        from sqlalchemy import create_engine
+        from datetime import datetime
+        from dateutil.relativedelta import relativedelta
+
+        def test_poc_sport_activity_clean():
+            engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
+            df = pd.read_sql("SELECT * FROM poc_sport_activity_clean", engine)
+
+            today = datetime.now().date()
+            min_date = today - relativedelta(years=1)
+            errors = []
+
+            # id_salarie null
+            invalid_id = df[df["id_salarie"].isnull()]
+            if not invalid_id.empty:
+                print("id_salarie NULL détecté :")
+                print(invalid_id)
+                errors.append("id_salarie null")
+
+            # type_sport null
+            invalid_sport = df[df["type_sport"].isnull()]
+            if not invalid_sport.empty:
+                print("type_sport NULL détecté :")
+                print(invalid_sport)
+                errors.append("type_sport null")
+
+            # distance négative
+            invalid_distance = df[df["distance_m"].notnull() & (df["distance_m"] < 0)]
+            if not invalid_distance.empty:
+                print("distance négative détectée :")
+                print(invalid_distance)
+                errors.append("distance negative")
+
+            # conversion des dates
+            dates = pd.to_datetime(df["date_debut"]).dt.date
+
+            # date dans le futur
+            invalid_future = df[dates > today]
+            if not invalid_future.empty:
+                print("date_debut dans le futur :")
+                print(invalid_future)
+                errors.append("date future")
+
+            # date trop ancienne
+            invalid_old = df[dates < min_date]
+            if not invalid_old.empty:
+                print("date_debut trop ancienne :")
+                print(invalid_old)
+                errors.append("date trop ancienne")
+
+            assert not errors, f"Tests échoués : {errors}"'''
+
+        # Sauvegarde dans un fichier temporaire
+        with open("tmp_test_poc_sport_activity_clean.py", "w") as f:
+            f.write(test_code)
+
+        # Lancement de pytest sur ce fichier
+        result = subprocess.run([sys.executable, "-m", "pytest", "tmp_test_poc_sport_activity_clean.py", "-v"], check=False)
+
+        # Si pytest échoue, on arrête le workflow
+        if result.returncode != 0:
+            raise Exception("Le test pytest a échoué")
+
+  - id: create_fact_prime_sportive
+    type: io.kestra.plugin.jdbc.postgresql.Queries
+    url: jdbc:postgresql://postgres:5432/kestra
+    username: kestra
+    password: k3str4
+    sql: |
+
+      DROP TABLE IF EXISTS poc_fact_prime_sportive;
+
+      CREATE TABLE poc_fact_prime_sportive AS
+
+      SELECT
+        rh.id_salarie,
+        rh.salaire_brut,
+
+        CASE
+          WHEN emp.declaration_valide = TRUE THEN TRUE
+          ELSE FALSE
+        END AS eligible_prime,
+
+        CASE
+          WHEN emp.declaration_valide = TRUE
+          THEN rh.salaire_brut * (
+            SELECT value
+            FROM poc_config_parameters
+            WHERE param_name = 'prime_rate'
+          )
+          ELSE 0
+        END AS montant_prime
+
+      FROM poc_rh_raw rh
+
+      LEFT JOIN poc_employees_enriched emp
+        ON rh.id_salarie = emp.id_salarie;
+
+  - id: create_fact_bien_etre
+    type: io.kestra.plugin.jdbc.postgresql.Queries
+    url: jdbc:postgresql://postgres:5432/kestra
+    username: kestra
+    password: k3str4
+    sql: |
+
+      DROP TABLE IF EXISTS poc_fact_bien_etre;
+
+      CREATE TABLE poc_fact_bien_etre AS
+
+      WITH activity_count AS (
+        SELECT
+          id_salarie,
+          COUNT(*) AS nb_activites
+        FROM poc_sport_activity_clean
+        GROUP BY id_salarie
+      )
+
+      SELECT
+        rh.id_salarie,
+
+        COALESCE(ac.nb_activites, 0) AS nb_activites,
+
+        CASE
+          WHEN COALESCE(ac.nb_activites, 0) >= (
+            SELECT value
+            FROM poc_config_parameters
+            WHERE param_name = 'min_activities'
+          )
+          THEN TRUE
+          ELSE FALSE
+        END AS eligible_bien_etre
+
+      FROM poc_rh_raw rh
+
+      LEFT JOIN activity_count ac
+        ON rh.id_salarie = ac.id_salarie;
+
+  - id: create_kpi_global
+    type: io.kestra.plugin.jdbc.postgresql.Queries
+    url: jdbc:postgresql://postgres:5432/kestra
+    username: kestra
+    password: k3str4
+    sql: |
+
+      DROP TABLE IF EXISTS poc_kpi_global;
+
+      CREATE TABLE poc_kpi_global AS
+
+      SELECT
+        rh.id_salarie,
+        rh.nom,
+        rh.prenom,
+        rh.salaire_brut,
+
+        emp.distance_km,
+        emp.declaration_valide,
+
+        prime.eligible_prime,
+        prime.montant_prime,
+
+        be.nb_activites,
+        be.eligible_bien_etre
+
+      FROM poc_rh_raw rh
+
+      LEFT JOIN poc_employees_enriched emp
+        ON rh.id_salarie = emp.id_salarie
+
+      LEFT JOIN poc_fact_prime_sportive prime
+        ON rh.id_salarie = prime.id_salarie
+
+      LEFT JOIN poc_fact_bien_etre be
+        ON rh.id_salarie = be.id_salarie;
