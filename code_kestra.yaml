@@ -273,7 +273,7 @@ tasks:
 
         if result.returncode != 0:
             raise Exception("Le test pytest a échoué")
-
+    
   - id: create_rh_enriched_table
     type: io.kestra.plugin.jdbc.postgresql.Query
     url: jdbc:postgresql://postgres:5432/kestra
@@ -445,7 +445,7 @@ tasks:
       )
 
       print("Toutes les distances calculées et table mise à jour")
-  
+
   - id: create_sport_activity_table
     type: io.kestra.plugin.jdbc.postgresql.Queries
     url: jdbc:postgresql://postgres:5432/kestra
@@ -463,6 +463,9 @@ tasks:
           commentaire TEXT
       );
         
+
+
+
   - id: generate_sport_activity
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
@@ -607,6 +610,11 @@ tasks:
       )
 
       print("Insertion terminée")
+
+
+
+
+
 
   - id: create_sport_activity_clean_table
     type: io.kestra.plugin.jdbc.postgresql.Queries
@@ -826,3 +834,4 @@ tasks:
 
       LEFT JOIN poc_fact_bien_etre be
         ON rh.id_salarie = be.id_salarie;
+
