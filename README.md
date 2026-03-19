@@ -120,7 +120,11 @@ Le Dockerfile personnalisé installe Python 3 et les librairies nécessaires pou
 
 ## 6. Variables d’environnement
 
-Le projet utilise une clé API pour le calcul des distances et un webhook slack pour l'envoie des messages. Vous devez créer un .env a la racine du projet avec :
+Le projet utilise une clé API pour le calcul des distances et un webhook slack pour l'envoie des messages.
+
+Ces informations peuvent être définies soit dans un fichier .env, soit dans les secrets de Kestra. Pour un POC, il est aussi possible de les mettre directement dans le code, mais cela n’est pas sécurisé pour un usage en production.
+
+Vous devez créer un .env à la racine du projet avec :
 
 `ORS_API_KEY=*******`
 `SLACK_WEBHOOK=*******`
@@ -217,6 +221,9 @@ Des tests automatiques sont implémentés avec PyTest.
 Une table `poc_sport_activity_clean` filtre uniquement les données valides.
 
 ## 10. Monitoring et gestion des erreurs
+
+Le pipeline intègre plusieurs mécanismes de monitoring afin de garantir la fiabilité, la traçabilité et la détection des anomalies.
+
 ### Surveillance
 
 - Logs détaillés dans Kestra
@@ -224,6 +231,40 @@ Une table `poc_sport_activity_clean` filtre uniquement les données valides.
 - Suivi des exécutions
 
 - Temps d’exécution observable
+
+### Suivi de la volumétrie des données
+
+Des indicateurs sont calculés à différentes étapes du pipeline via les outputs Kestra :
+
+- Nombre de lignes RH chargées (rh_rows)
+
+- Nombre de lignes sport (sport_rows)
+
+- Nombre d’activités sportives générées
+
+- Nombre de lignes dans le KPI global (nb_kpi_rows)
+
+Ces métriques permettent de suivre l’évolution des volumes et de détecter rapidement toute anomalie.
+
+### Outputs avec Kestra
+
+Les scripts Python utilisent `Kestra.outputs()` pour exposer des métriques, ce qui permet :
+
+- l’exploitation de ces métriques dans les tâches suivantes,
+
+- la centralisation des informations dans les logs,
+
+- la facilitation du debugging et du monitoring.
+
+Un résumé global est également affiché en fin de pipeline, comprenant :
+
+- le nombre de lignes chargées,
+
+- le nombre d’activités générées,
+
+- le nombre de KPI calculés.
+
+Cette synthèse permet une lecture rapide de l’état du pipeline et facilite le suivi des performances.
 
 ### Gestion des erreurs
 
@@ -236,6 +277,8 @@ Une table `poc_sport_activity_clean` filtre uniquement les données valides.
     - Slack
 
     - Email
+
+Ces alertes permettent une réaction rapide en cas de problème.
 
 ## 11. Paramétrage métier
 
