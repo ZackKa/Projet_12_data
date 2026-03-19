@@ -835,3 +835,65 @@ tasks:
       LEFT JOIN poc_fact_bien_etre be
         ON rh.id_salarie = be.id_salarie;
 
+
+  - id: create_kpi_global_monitoring
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    script: |
+      import pandas as pd
+      from sqlalchemy import create_engine
+
+      # Connexion à PostgreSQL
+      engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
+
+      # Lecture de la table KPI global
+      df_kpi = pd.read_sql("SELECT * FROM poc_kpi_global", engine)
+
+      # Vérification qu'il y a des données
+      if len(df_kpi) == 0:
+          raise Exception("Aucune donnée dans le KPI global")
+
+      # Affichage dans les logs Kestra
+      print(f"{len(df_kpi)} salariés dans le KPI global")
+
+      # Création d'un output Kestra pour monitoring / alertes
+      from kestra import Kestra
+      Kestra.outputs({
+          "nb_kpi_rows": len(df_kpi)
+      })
+
+# MONITORING
+
+  - id: log_final_summary
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      Résumé du chargement des fichiers :
+      - RH rows: {{ outputs.load_raw_tables.vars.rh_rows | default('N/A') }}
+      - SPORT rows: {{ outputs.load_raw_tables.vars.sport_rows | default('N/A') }}
+      - Activités générées: {{ outputs.generate_sport_activity.vars.nb_activities | default('N/A') }}
+      - Salariés KPI global: {{ outputs.create_kpi_global_monitoring.vars.nb_kpi_rows | default('N/A') }}
+
+
+errors:
+  - id: notify_failure_email
+    type: io.kestra.plugin.email.MailSend   # Indique que la tâche va envoyer un e-mail en cas d’échec.
+    from: "noreply@test.fr"   # Adresse de l’expéditeur (fictive pour l’exemple)
+    to: "data-team@test.fr"   # Adresse du destinataire (fictive pour l’exemple)
+    subject: "Le workflow a echoué pour {{ flow.id }} dans le namespace {{flow.namespace}}"   # Sujet du mail.
+      # Contenu du mail
+    htmlTextContent: |
+      Le pipeline {{ flow.namespace }} a échoué.<br>
+      Execution : {{ execution.id }}<br>
+      Statut : {{ execution.state }}
+      Task en erreur : {{ task.id }}<br>
+# Pour un environnement réel, l'envoi d'email nécessite la configuration d'un SMTP (Simple Mail Transfer Protocol) avec host (adresse du serveur), port,  # username et password pour l'authentification. Cette configuration permet l'envoi des email. Pour ce POC, cela n'est pas nécessaire.
+ 
+  - id: notify_failure_slack
+    type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+    #url: "{{ secret('SLACK_WEBHOOK') }}"   # webhook Slack stocké dans les secrets
+    url: "${SLACK_WEBHOOK}"     # webhook Slack stocké dans .env
+    payload: |
+      {
+        "text": "⚠️ Test de l'envoie de message slack. Le workflow *{{ flow.id }}* ({{ flow.namespace }}) a échoué !\nExecution : {{ execution.id }}\nTask en erreur : {{ task.id }}"
+      }
