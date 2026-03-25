@@ -11,7 +11,7 @@ L’entreprise développe des solutions de monitoring et d’analyse de performa
 
 Juliette souhaite renforcer la culture sportive au sein de l’entreprise en proposant des avantages aux salariés qui pratiquent une activité physique régulière. 
 
-### Objectifs métier
+## 2. Objectifs métier
 
 - Encourager un mode de vie sain
 
@@ -21,7 +21,7 @@ Juliette souhaite renforcer la culture sportive au sein de l’entreprise en pro
 
 - Mesurer l’impact financier des avantages proposés
 
-## 2. Objectifs du POC
+## 3. Objectifs du POC
 
 Ce Proof of Concept vise à :
 
@@ -29,26 +29,30 @@ Ce Proof of Concept vise à :
 
 2. Générer des données d’activités sportives réalistes (type Strava)
 
-3. Calculer :
+3. Mettre en place une architecture hybride batch + streaming
 
-- une prime sportive (5% du salaire)
+4. Calculer :
 
-- des jours de bien-être
+        - une prime sportive (5% du salaire)
 
-4. Mettre en place des tests de qualité des données
+        - des jours de bien-être
 
-5. Automatiser le pipeline de bout en bout
+5. Mettre en place des tests de qualité des données
 
-6. Superviser les exécutions avec alerting
+6. Automatiser le pipeline de bout en bout
 
-7. Préparer les données pour un dashboard PowerBI
+7. Superviser les exécutions avec alerting
 
-## 3. Technologies et outils utilisés
+8. Préparer les données pour un dashboard PowerBI
+
+## 4. Technologies et outils utilisés
 
 | Catégorie           | Outils / Librairies |
 |--------------------|------------------|
 | **Orchestration**    | Kestra (orchestration des tâches ETL et automation Slack) |
 | **Base de données**  | PostgreSQL (stockage des données RAW, STAGING, MART) |
+| **Streaming**        | Redpanda (Kafka API compatible) |
+| **Message broker**   | Kafka (via Redpanda) |
 | **Langage**          | Python (ingestion, transformation, simulation Strava, calcul des distances) |
 | **Librairies**       | pandas, numpy, requests, openrouteservice, python-dateutil, sqlalchemy, psycopg2-binary, Faker, openpyxl,pytest |
 | **API externe**       | OpenRouteService |
@@ -57,34 +61,45 @@ Ce Proof of Concept vise à :
 | **Simulation & tests** | Pytest pour les données sportives réalistes pour 12 mois, tests de cohérence et validation des données |
 | **Communication interne** | Slack + email pour notifications |
 
-## 4. Architecture du pipeline
+## 5. Architecture du pipeline
 
 #### Le pipeline suit une architecture en plusieurs couches :
 
 ```text
-[Sources Excel]
-        ↓
-[Ingestion Kestra]
-        ↓
-[PostgreSQL - RAW]
-        ↓
-[Transformation Python / SQL]
-        ↓
-[STAGING (données enrichies)]
-        ↓
-[Tests qualité (Pytest)]
-        ↓
-[MART (tables métiers)]
-        ↓
-[PowerBI Dashboard]
+                   [Sources Excel]
+                          │
+          ┌───────────────┴───────────────┐
+          │                               │
+ [Ingestion Kestra (Batch)]   [Producer Python → Redpanda / Kafka → Consumer Kestra (Streaming)]
+          │                               │
+          └───────────────┬───────────────┘
+                          │
+                 [PostgreSQL - RAW]
+                          │
+             [Transformation Python / SQL]
+                          │
+               [STAGING (données enrichies)]
+                          │
+                 [Tests qualité (Pytest)]
+                          │
+                 [MART (tables métiers)]
+                          │
+                 [PowerBI Dashboard]
 ```
+#### Type d’architecture
+
+Le pipeline combine :
+
+- Batch → ingestion des données RH
+
+- Streaming → ingestion des activités sportives
 
 Monitoring :
 - Logs Kestra
 - Alertes Slack / Email
 
 
-## 5. Infrastructure mise en place
+## 6. Infrastructure mise en place
 
 Le projet utilise Docker Compose pour lancer l’ensemble de l’infrastructure :
 
@@ -100,15 +115,23 @@ Conteneurs :
 
 - `kestra` : orchestration ETL et scripts Python
 
+- `redpanda-0` : broker Kafka
+
+- `redpanda-console` : interface Kafka
+
+- `producer` : simulation des activités
+
 Volumes persistants :
 
 - `postgres-data-projet12`
 
 - `kestra-data-projet12`
 
+- `redpanda-data`
+
 ### Dockerfile Kestra
 
-Le Dockerfile personnalisé installe Python 3 et les librairies nécessaires pour :
+Les Dockerfiles personnalisés installent Python 3 et les librairies nécessaires pour :
 
 - L’ingestion et le traitement des fichiers Excel,
 
@@ -118,7 +141,7 @@ Le Dockerfile personnalisé installe Python 3 et les librairies nécessaires pou
 
 - La communication avec PostgreSQL.
 
-## 6. Variables d’environnement
+## 7. Variables d’environnement
 
 Le projet utilise une clé API pour le calcul des distances et un webhook slack pour l'envoie des messages.
 
@@ -130,7 +153,7 @@ Vous devez créer un .env à la racine du projet avec :
 `SLACK_WEBHOOK=*******`
 
 
-## 7. Organisation des données
+## 8. Organisation des données
 
 ### RAW (données brutes)
 
@@ -141,6 +164,8 @@ Vous devez créer un .env à la racine du projet avec :
 - sports_activity_raw : historique simulé des activités sportives (12 mois, type Strava).
 
 - config_parameters : règles paramétrables (taux prime, nombre minimum d’activités, distances max selon mode de déplacement).
+
+- poc_sport_activity_messages : Pour avoir un historique des messages d'encouragement envoyés sur Slack
 
 ### STAGING (données enrichies / transformées)
 
@@ -156,7 +181,7 @@ Vous devez créer un .env à la racine du projet avec :
 
 - kpi_global : tableau de bord global pour PowerBI.
 
-## 8. Pipeline Kestra – Description des tasks
+## 9. Pipeline Kestra – Description des tasks
 
 Le workflow Kestra est organisé pour automatiser l’ensemble du POC, de l’ingestion à la simulation des activités sportives.
 
@@ -173,18 +198,42 @@ Le workflow Kestra est organisé pour automatiser l’ensemble du POC, de l’in
 | **create_rh_enriched_table**         | Création de la table poc_employees_enriched pour les données enrichies domicile-travail.     |
 | **distances_domicile_travail**       | Calcul des distances domicile-travail via OpenRouteService et validation des déclarations. |
 | **create_sport_activity_table**      | Création de la table poc_sport_activity pour stocker les activités sportives simulées. |
-| **generate_sport_activity**          | Génération aléatoire et réaliste de plusieurs activités sportives par salarié avec commentaires. |
+| **consume_kafka_sport_activity**     | Consommation des données Kafka |
+| **create_table_message_slack**       | Création de la table poc_sport_activity_messages pour l'historique des messages slack.     |
+| **send_encouragement_messages**      | Task qui envoie des messages slack pour chaque activité     |
 | **create_sport_activity_clean_table**| Nettoyage des données activité sportive                      |
 | **test_poc_sport_activity_clean**    | Tests qualité activités                                |
 | **create_fact_prime_sportive**       | Calcul des primes                                   |
 | **create_fact_bien_etre**            | Calcul de la condition "bien-être"                                  |
 | **create_kpi_global**                | Table finale KPI                                  |
+| **create_kpi_global_monitoring**     | Sert pour afficher logs   |
+| **log_final_summary**                | Affiche les logs de volumétrie   |
 | **notify_failure_email**             | Notifications Email                                  |
 | **notify_failure_slack**             | Notifications Slack                                  |
 
 
+## 10. Simulation des données (Streaming)
 
-## 9. Qualité des données et règles métiers
+Les activités sportives sont générées via un **producer Python**.
+
+### Fonctionnement
+
+1. Lecture fichiers Excel
+
+2. Génération d’activités réalistes
+
+3. Envoi dans Kafka (`sport_activity`)
+
+### Objectif
+
+Simuler une API type Strava en temps réel.
+
+### Consommation
+
+Kestra récupère les événements et les stocke dans PostgreSQL.
+
+
+## 11. Qualité des données et règles métiers
 
 Des tests automatiques sont implémentés avec PyTest.
 
@@ -220,67 +269,33 @@ Des tests automatiques sont implémentés avec PyTest.
 
 Une table `poc_sport_activity_clean` filtre uniquement les données valides.
 
-## 10. Monitoring et gestion des erreurs
+## 12. Monitoring et gestion des erreurs
 
-Le pipeline intègre plusieurs mécanismes de monitoring afin de garantir la fiabilité, la traçabilité et la détection des anomalies.
+Le pipeline intègre plusieurs mécanismes pour garantir fiabilité, traçabilité et détection des anomalies.
 
-### Surveillance
+### Suivi et surveillance
 
-- Logs détaillés dans Kestra
-
-- Suivi des exécutions
-
+- Logs détaillés et suivi des exécutions dans Kestra
+- Retry automatique pour les tâches critiques
 - Temps d’exécution observable
+- Indicateurs de volumétrie calculés via `Kestra.outputs()` :
+  - Lignes RH chargées (`rh_rows`)
+  - Lignes sport (`sport_rows`)
+  - Activités sportives (`nb_activities_kafka`)
+  - Lignes KPI global (`nb_kpi_rows`)
 
-### Suivi de la volumétrie des données
+Ces métriques permettent de détecter rapidement toute anomalie et de suivre l’évolution des volumes.
 
-Des indicateurs sont calculés à différentes étapes du pipeline via les outputs Kestra :
+### Gestion des alertes
 
-- Nombre de lignes RH chargées (rh_rows)
-
-- Nombre de lignes sport (sport_rows)
-
-- Nombre d’activités sportives générées
-
-- Nombre de lignes dans le KPI global (nb_kpi_rows)
-
-Ces métriques permettent de suivre l’évolution des volumes et de détecter rapidement toute anomalie.
-
-### Outputs avec Kestra
-
-Les scripts Python utilisent `Kestra.outputs()` pour exposer des métriques, ce qui permet :
-
-- l’exploitation de ces métriques dans les tâches suivantes,
-
-- la centralisation des informations dans les logs,
-
-- la facilitation du debugging et du monitoring.
-
-Un résumé global est également affiché en fin de pipeline, comprenant :
-
-- le nombre de lignes chargées,
-
-- le nombre d’activités générées,
-
-- le nombre de KPI calculés.
-
-Cette synthèse permet une lecture rapide de l’état du pipeline et facilite le suivi des performances.
-
-### Gestion des erreurs
-
-- Retry automatique des tâches critiques
-
-- Arrêt du pipeline si tests échouent
-
+- Arrêt du pipeline si les tests échouent
 - Alertes automatiques :
+  - Slack
+  - Email
 
-    - Slack
+Un résumé global est affiché en fin de pipeline, donnant une lecture rapide de l’état et des performances.
 
-    - Email
-
-Ces alertes permettent une réaction rapide en cas de problème.
-
-## 11. Paramétrage métier
+## 13. Paramétrage métier
 
 Les règles sont externalisées dans la table :
 
@@ -288,17 +303,17 @@ Les règles sont externalisées dans la table :
 
 Exemples :
 
-prime_rate = 5%
+        - prime_rate = 5%
 
-min_activities = 15
+        - min_activities = 15
 
-max_walk_km = 15
+        - max_walk_km = 15
 
-max_bike_km = 25
+        - max_bike_km = 25
 
 Permet d’adapter le pipeline sans modifier le code
 
-## 12. Simulation des données
+## 14. Simulation des données (`producer.py`)
 
 Les activités sportives sont générées avec :
 
@@ -310,7 +325,7 @@ Les activités sportives sont générées avec :
 
 - Commentaires dynamiques
 
-## 13. Table KPIs générés
+## 15. Table KPIs générés
 
 - Montant total des primes
 
@@ -320,18 +335,33 @@ Les activités sportives sont générées avec :
 
 - Éligibilité bien-être
 
-## 14. Instructions pour lancer le workflow
+## 16. Dashboard Power BI
+
+Les données finales permettent de visualiser :
+
+- primes
+
+- activité sportive
+
+- éligibilité
+
+- impact financier
+
+## 17. Instructions pour lancer le workflow
 
 1. Lancer Docker Compose :
 !!! Attention avant de lancer cette commande assurer vous d'avoir lancer docker (linux) ou docker desktop (windows/macOs)
 ```bash
 docker-compose up -d
+
+**A savoir** cette commande lance tout le projet, donc en cas de réexécution du projet, pensez à commenter le produceur dans docker-compose.yaml du dossier Kestra, pour ne pas avoir de nouvelles données sportives créées qui seront ajoutées aux anciennes.
+
 ```
 2. Vérifier que les conteneurs postgres et kestra sont en ligne.
 
 3. Accéder à l’interface Kestra sur http://localhost:8080.
 
-4. Importer le workflow pipeline_sport_p12 dans Kestra.
+4. Importer le workflow **pipeline_sport_p12** dans **Kestra**. Vous le trouverez dans le fichier `code_kestra.yaml`
 
 5. **!!! Pensez à mettre votre clé api dans un fichier .env à la racine du projet. Vous pouvez en créer une sur le site de openrouteservice. Ainsi que votre Slack webhook créer sur slack pour recevoir les message**
 
@@ -345,7 +375,7 @@ Les activités sportives simulées sont générées aléatoirement mais avec des
 
 Les commentaires sont générés automatiquement pour chaque activité.
 
-## 15. Conclusion
+## 18. Conclusion
 
 Ce POC démontre la faisabilité d’un système complet :
 

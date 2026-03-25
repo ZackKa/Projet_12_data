@@ -74,6 +74,10 @@ tasks:
     url: jdbc:postgresql://postgres:5432/kestra
     username: kestra
     password: k3str4
+    retry:
+        type: constant
+        maxAttempt: 3
+        interval: PT15S
     sql: |
 
       CREATE TABLE IF NOT EXISTS poc_config_parameters (
@@ -94,6 +98,10 @@ tasks:
     url: jdbc:postgresql://postgres:5432/kestra
     username: kestra
     password: k3str4
+    retry:
+        type: constant
+        maxAttempt: 3
+        interval: PT15S
     sql: |
 
       CREATE TABLE IF NOT EXISTS poc_rh_raw (
@@ -114,11 +122,15 @@ tasks:
         id_salarie INTEGER,
         sport TEXT
       );
-          
+
   - id: load_raw_tables
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
+    retry:
+        type: constant         # type de retry : constant, exponential, etc.
+        maxAttempt: 3          # nombre de tentatives
+        interval: PT30S        # intervalle entre tentatives (ISO 8601 : PT30S = 30 secondes)
     inputFiles:
       rh.xlsx: "{{ outputs.ingestion_all.outputFiles['data/rh.xlsx'] }}"
       sportive.xlsx: "{{ outputs.ingestion_all.outputFiles['data/sportive.xlsx'] }}"
@@ -163,6 +175,12 @@ tasks:
       print("Insertion terminée")
 
 
+      from kestra import Kestra
+      Kestra.outputs({
+          "rh_rows": len(df_rh),
+          "sport_rows": len(df_sport)
+      })
+
   - id: test_poc_rh_raw
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
@@ -180,7 +198,7 @@ tasks:
         def test_poc_rh_raw():
             engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
             df = pd.read_sql("SELECT * FROM poc_rh_raw", engine)
-            
+
             errors = []
 
             # Valeurs manquantes
@@ -196,7 +214,7 @@ tasks:
                 print("Doublons détectés :")
                 print(df[duplicates])
                 errors.append(f"Doublons: {duplicates.sum()}")
-            
+
             # Salaire positif
             invalid_salaire = df[df["salaire_brut"] <= 0]
             if not invalid_salaire.empty:
@@ -247,7 +265,7 @@ tasks:
         def test_poc_sportive_raw():
             engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
             df = pd.read_sql("SELECT * FROM poc_sportive_raw", engine)
-            
+
             errors = []
 
             # id_salarie non NULL
@@ -273,12 +291,16 @@ tasks:
 
         if result.returncode != 0:
             raise Exception("Le test pytest a échoué")
-    
+
   - id: create_rh_enriched_table
     type: io.kestra.plugin.jdbc.postgresql.Query
     url: jdbc:postgresql://postgres:5432/kestra
     username: kestra
     password: k3str4
+    retry:
+        type: constant
+        maxAttempt: 3
+        interval: PT15S
     sql: |
 
       CREATE TABLE IF NOT EXISTS poc_employees_enriched (
@@ -295,6 +317,10 @@ tasks:
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
+    retry:
+        type: constant         # type de retry : constant, exponential, etc.
+        maxAttempt: 3          # nombre de tentatives
+        interval: PT30S        # intervalle entre tentatives (ISO 8601 : PT30S = 30 secondes)
     script: |
       import pandas as pd
       import requests
@@ -445,14 +471,24 @@ tasks:
       )
 
       print("Toutes les distances calculées et table mise à jour")
+      print(f"{len(df_out)} distances calculées")
+
+      from kestra import Kestra
+      Kestra.outputs({
+          "nb_distances": len(df_out)
+      })
 
   - id: create_sport_activity_table
     type: io.kestra.plugin.jdbc.postgresql.Queries
     url: jdbc:postgresql://postgres:5432/kestra
     username: kestra
     password: k3str4
+    retry:
+      type: constant
+      maxAttempt: 3
+      interval: PT15S
     sql: |
-
+      
       CREATE TABLE IF NOT EXISTS poc_sport_activity (
           id_activite SERIAL PRIMARY KEY,
           id_salarie INTEGER,
@@ -462,167 +498,177 @@ tasks:
           duree_min INTEGER,
           commentaire TEXT
       );
-        
 
 
-
-  - id: generate_sport_activity
+  - id: consume_kafka_sport_activity
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
+    retry:
+      type: constant
+      maxAttempt: 3
+      interval: PT30S
     script: |
+      import json
       import pandas as pd
-      import random
-      from datetime import datetime, timedelta
+      from kafka import KafkaConsumer
       from sqlalchemy import create_engine
-      from faker import Faker
+      from datetime import datetime
+      import time
 
-      # Initialisation Faker
-      fake = Faker("fr_FR")
+      KAFKA_BROKER = "redpanda-0:9092"
+      TOPIC = "sport_activity"
 
-      print("Connexion PostgreSQL...")
+      # Connexion PostgreSQL
       engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
+      print("Début de la récupération des activités depuis Kafka")
 
-      print("Lecture des salariés sportifs...")
-      df = pd.read_sql("SELECT * FROM poc_sportive_raw WHERE sport IS NOT NULL", engine)
-
-      activities = []
-      today = datetime.now()
-
-      sports_distance = ["runing","randonnée","vélo","triathlon","natation"]
-
-      moods = [
-          "Motivation au top",
-          "Super sensations",
-          "Fatigué mais content",
-          "Belle sortie",
-          "Très bonne énergie"
-      ]
-
-      weather = [
-          "Sous le soleil",
-          "Malgré la pluie",
-          "Avec un peu de vent",
-          "Temps parfait pour le sport"
-      ]
-
-      print("Génération des activités...")
-
-      for _, row in df.iterrows():
-          id_salarie = row["id_salarie"]
-          sport = row["sport"]
-          sport_lower = sport.lower()
-          nb_activities = random.randint(5, 30)
-
-          for _ in range(nb_activities):
-              # Date et heure aléatoires
-              random_days = random.randint(0, 365)
-              date = today - timedelta(days=random_days)
-              hour = random.randint(6, 21)
-              minute = random.randint(0, 59)
-              date_debut = date.replace(hour=hour, minute=minute, second=0)
-
-              distance_m = None
-              duree_min = random.randint(5, 120)
-
-              # Si sport avec distance, générer distance réaliste et ajuster durée
-              if sport_lower in sports_distance:
-                  if sport_lower == "runing":
-                      distance_m = random.randint(3000, 15000)
-                  elif sport_lower == "randonnée":
-                      distance_m = random.randint(5000, 25000)
-                  elif sport_lower == "vélo":
-                      distance_m = random.randint(5000, 80000)
-                  elif sport_lower == "triathlon":
-                      distance_m = random.randint(30000, 70000)
-                  elif sport_lower == "natation":
-                      distance_m = random.randint(500, 3000)
-                  duree_min = int(distance_m / 200)
-
-              # Décider aléatoirement s'il y a un commentaire (30% des cas = aucun)
-              if random.random() < 0.3:
-                  commentaire = None
-              else:
-                  # Choisir un template selon distance/durée
-                  if distance_m:
-                      km = distance_m / 1000
-                      if km < 3:
-                          template = fake.random_element([
-                              "Petite sortie de {sport} : {distance:.1f} km en {duree} min. 💪",
-                              "{distance:.1f} km de {sport} parcourus rapidement en {duree} min. 😎"
-                          ])
-                      elif km < 10:
-                          template = fake.random_element([
-                              "Séance de {sport} de {distance:.1f} km en {duree} min. 🔥",
-                              "Super {sport} aujourd'hui : {distance:.1f} km en {duree} min ! ⚡"
-                          ])
-                      else:
-                          template = fake.random_element([
-                              "Grosse sortie de {sport} : {distance:.1f} km en {duree} min. 🏅",
-                              "Performance record : {distance:.1f} km de {sport} en {duree} min ! 💪"
-                          ])
-                      commentaire = template.format(sport=sport_lower, distance=km, duree=duree_min)
-                  else:
-                      # Sports sans distance
-                      if duree_min < 20:
-                          template = fake.random_element([
-                              "Petite séance de {sport} pendant {duree} min. 💪",
-                              "Courte séance de {sport} de {duree} min. 😃"
-                          ])
-                      elif duree_min < 60:
-                          template = fake.random_element([
-                              "Bonne séance de {sport} : {duree} min bien efficaces. 🔥",
-                              "{duree} min de {sport}, super séance ! ⚡"
-                          ])
-                      else:
-                          template = fake.random_element([
-                              "Grosse séance de {sport} : {duree} min d'effort intense ! 🏅",
-                              "Longue séance de {sport} pendant {duree} min, top performance ! 💪"
-                          ])
-                      commentaire = template.format(sport=sport_lower, duree=duree_min)
-
-                  # Ajouter mood et météo seulement si commentaire existe
-                  commentaire += f" {fake.random_element(moods)}. {fake.random_element(weather)}."
-
-              activities.append({
-                  "id_salarie": id_salarie,
-                  "date_debut": date_debut,
-                  "type_sport": sport,
-                  "distance_m": distance_m,
-                  "duree_min": duree_min,
-                  "commentaire": commentaire
-              })
-
-      df_out = pd.DataFrame(activities)
-
-      print(f"{len(df_out)} activités générées")
-
-      # Supprimer les anciennes données
-      with engine.begin() as conn:
-          conn.exec_driver_sql("TRUNCATE TABLE poc_sport_activity RESTART IDENTITY;")
-
-      # Insérer les nouvelles données
-      df_out.to_sql(
-          "poc_sport_activity",
-          engine,
-          if_exists="append",
-          index=False
+      # Création du consumer Kafka
+      consumer = KafkaConsumer(
+          TOPIC,
+          bootstrap_servers=[KAFKA_BROKER],
+          value_deserializer=lambda m: json.loads(m.decode('utf-8')),
+          auto_offset_reset='earliest',
+          enable_auto_commit=True,
+          consumer_timeout_ms=5000
       )
 
-      print("Insertion terminée")
+      activities = []
+      for message in consumer:
+          activity = message.value
+          # Normalisation date
+          if "date_debut" in activity:
+              activity["date_debut"] = pd.to_datetime(activity["date_debut"])
+          activities.append(activity)
 
+      if activities:
+          df = pd.DataFrame(activities)
+          print(f"{len(df)} activités reçues depuis Kafka")
+          # Insertion en table clean
+          with engine.begin() as conn:
+              conn.exec_driver_sql("TRUNCATE TABLE poc_sport_activity RESTART IDENTITY;")
+          df.to_sql("poc_sport_activity", engine, if_exists="append", index=False)
+      else:
+          print("Aucune activité reçue depuis Kafka")
 
+      from kestra import Kestra
+      Kestra.outputs({
+          "nb_activities_kafka": len(activities)
+      })
 
+  - id: create_table_message_slack
+    type: io.kestra.plugin.jdbc.postgresql.Queries
+    url: jdbc:postgresql://postgres:5432/kestra
+    username: kestra
+    password: k3str4
+    retry:
+      type: constant
+      maxAttempt: 3
+      interval: PT15S
+    sql: |
 
+      DROP TABLE IF EXISTS poc_sport_activity_messages;
 
+      CREATE TABLE IF NOT EXISTS poc_sport_activity_messages (
+          id_message SERIAL PRIMARY KEY,
+          id_activite INTEGER NOT NULL UNIQUE,
+          date_envoi TIMESTAMP DEFAULT NOW(),
+          message TEXT NOT NULL
+      );
+
+# DROP TABLE IF EXISTS poc_sport_activity_messages; pour supprimer la table des messages pour tester de nouvelles activités
+
+  - id: send_encouragement_messages
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    retry:
+      type: constant
+      maxAttempt: 3
+      interval: PT30S
+    script: |
+      import pandas as pd
+      from sqlalchemy import create_engine, text
+      import requests
+      from faker import Faker
+      import os
+      import time
+
+      fake = Faker("fr_FR")
+      WEBHOOK_URL = os.getenv("SLACK_WEBHOOK")  # lecture du webhook depuis .env
+      if not WEBHOOK_URL:
+          raise ValueError("La variable SLACK_WEBHOOK n'est pas définie !")
+
+      engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
+
+      # Templates naturels
+      slack_templates = [
+          "🎉 Bravo {prenom} {nom} ! Super sortie de {sport} le {date} ! 💪",
+          "🏅 {prenom} {nom} a fait une belle séance de {sport} le {date} ! Continue comme ça !",
+          "🔥 {prenom} {nom}, ton activité {sport} du {date} est impressionnante !",
+          "⚡ {prenom} {nom} a accompli un superbe {sport} le {date} ! Félicitations !",
+          "💪 {prenom} {nom}, bravo pour ta séance de {sport} le {date} ! Gardons cette énergie !"
+      ]
+
+      # Lire toutes les activités
+      #activities = pd.read_sql("SELECT * FROM poc_sport_activity", engine)
+      # JOIN pour récupérer prénom / nom
+      activities = pd.read_sql("""
+          SELECT a.*, r.prenom, r.nom
+          FROM poc_sport_activity a
+          LEFT JOIN poc_rh_raw r
+              ON a.id_salarie = r.id_salarie
+      """, engine)
+
+      for _, row in activities.iterrows():
+          id_activite = row['id_activite']
+
+          # Vérifier si message déjà envoyé
+          msg_exist = pd.read_sql(
+              "SELECT 1 FROM poc_sport_activity_messages WHERE id_activite = %s",
+              engine, params=(id_activite,)
+          )
+
+          if msg_exist.empty:
+              # Générer message naturel
+              template = fake.random_element(slack_templates)
+
+              message = template.format(
+                  prenom = row['prenom'] if pd.notnull(row['prenom']) else "Utilisateur",
+                  nom = row['nom'] if pd.notnull(row['nom']) else "",
+                  sport=row['type_sport'],
+                  date=pd.to_datetime(row['date_debut']).strftime('%d/%m/%Y')
+              )
+
+              # Envoyer message
+              try:
+                  requests.post(WEBHOOK_URL, json={"text": message})
+                  # time.sleep(0.05)  # éviter spam Slack
+              except Exception as e:
+                  print(f"Erreur envoi Slack pour {id_activite} : {e}")
+                  continue
+
+              # Historiser le message
+              with engine.begin() as conn:
+                conn.execute(
+                    text("INSERT INTO poc_sport_activity_messages (id_activite, message) VALUES (:id_activite, :message)"),
+                    {"id_activite": id_activite, "message": message}
+                )
+              print(f"Message envoyé pour activité {id_activite}")
+          else:
+              print(f"Message déjà envoyé pour activité {id_activite}, skip")
 
   - id: create_sport_activity_clean_table
     type: io.kestra.plugin.jdbc.postgresql.Queries
     url: jdbc:postgresql://postgres:5432/kestra
     username: kestra
     password: k3str4
+    retry:
+      type: constant
+      maxAttempt: 3
+      interval: PT15S
     sql: |
-
+      
       DROP TABLE IF EXISTS poc_sport_activity_clean;
 
       CREATE TABLE poc_sport_activity_clean AS
@@ -649,88 +695,92 @@ tasks:
   - id: test_poc_sport_activity_clean
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
-        type: io.kestra.plugin.core.runner.Process
+      type: io.kestra.plugin.core.runner.Process
     script: |
-        import pytest
-        import pandas as pd
-        from sqlalchemy import create_engine
-        from datetime import datetime
-        from dateutil.relativedelta import relativedelta
-        import sys
-        import subprocess
+      import pytest
+      import pandas as pd
+      from sqlalchemy import create_engine
+      from datetime import datetime
+      from dateutil.relativedelta import relativedelta
+      import sys
+      import subprocess
 
-        # Création d'un fichier temporaire pour le test pytest
-        test_code = '''import pandas as pd
-        from sqlalchemy import create_engine
-        from datetime import datetime
-        from dateutil.relativedelta import relativedelta
+      # Création d'un fichier temporaire pour le test pytest
+      test_code = '''import pandas as pd
+      from sqlalchemy import create_engine
+      from datetime import datetime
+      from dateutil.relativedelta import relativedelta
 
-        def test_poc_sport_activity_clean():
-            engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
-            df = pd.read_sql("SELECT * FROM poc_sport_activity_clean", engine)
+      def test_poc_sport_activity_clean():
+          engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
+          df = pd.read_sql("SELECT * FROM poc_sport_activity_clean", engine)
 
-            today = datetime.now().date()
-            min_date = today - relativedelta(years=1)
-            errors = []
+          today = datetime.now().date()
+          min_date = today - relativedelta(years=1)
+          errors = []
 
-            # id_salarie null
-            invalid_id = df[df["id_salarie"].isnull()]
-            if not invalid_id.empty:
-                print("id_salarie NULL détecté :")
-                print(invalid_id)
-                errors.append("id_salarie null")
+          # id_salarie null
+          invalid_id = df[df["id_salarie"].isnull()]
+          if not invalid_id.empty:
+              print("id_salarie NULL détecté :")
+              print(invalid_id)
+              errors.append("id_salarie null")
 
-            # type_sport null
-            invalid_sport = df[df["type_sport"].isnull()]
-            if not invalid_sport.empty:
-                print("type_sport NULL détecté :")
-                print(invalid_sport)
-                errors.append("type_sport null")
+          # type_sport null
+          invalid_sport = df[df["type_sport"].isnull()]
+          if not invalid_sport.empty:
+              print("type_sport NULL détecté :")
+              print(invalid_sport)
+              errors.append("type_sport null")
 
-            # distance négative
-            invalid_distance = df[df["distance_m"].notnull() & (df["distance_m"] < 0)]
-            if not invalid_distance.empty:
-                print("distance négative détectée :")
-                print(invalid_distance)
-                errors.append("distance negative")
+          # distance négative
+          invalid_distance = df[df["distance_m"].notnull() & (df["distance_m"] < 0)]
+          if not invalid_distance.empty:
+              print("distance négative détectée :")
+              print(invalid_distance)
+              errors.append("distance negative")
 
-            # conversion des dates
-            dates = pd.to_datetime(df["date_debut"]).dt.date
+          # conversion des dates
+          dates = pd.to_datetime(df["date_debut"]).dt.date
 
-            # date dans le futur
-            invalid_future = df[dates > today]
-            if not invalid_future.empty:
-                print("date_debut dans le futur :")
-                print(invalid_future)
-                errors.append("date future")
+          # date dans le futur
+          invalid_future = df[dates > today]
+          if not invalid_future.empty:
+              print("date_debut dans le futur :")
+              print(invalid_future)
+              errors.append("date future")
 
-            # date trop ancienne
-            invalid_old = df[dates < min_date]
-            if not invalid_old.empty:
-                print("date_debut trop ancienne :")
-                print(invalid_old)
-                errors.append("date trop ancienne")
+          # date trop ancienne
+          invalid_old = df[dates < min_date]
+          if not invalid_old.empty:
+              print("date_debut trop ancienne :")
+              print(invalid_old)
+              errors.append("date trop ancienne")
 
-            assert not errors, f"Tests échoués : {errors}"'''
+          assert not errors, f"Tests échoués : {errors}"'''
 
-        # Sauvegarde dans un fichier temporaire
-        with open("tmp_test_poc_sport_activity_clean.py", "w") as f:
-            f.write(test_code)
+      # Sauvegarde dans un fichier temporaire
+      with open("tmp_test_poc_sport_activity_clean.py", "w") as f:
+          f.write(test_code)
 
-        # Lancement de pytest sur ce fichier
-        result = subprocess.run([sys.executable, "-m", "pytest", "tmp_test_poc_sport_activity_clean.py", "-v"], check=False)
+      # Lancement de pytest sur ce fichier
+      result = subprocess.run([sys.executable, "-m", "pytest", "tmp_test_poc_sport_activity_clean.py", "-v"], check=False)
 
-        # Si pytest échoue, on arrête le workflow
-        if result.returncode != 0:
-            raise Exception("Le test pytest a échoué")
+      # Si pytest échoue, on arrête le workflow
+      if result.returncode != 0:
+          raise Exception("Le test pytest a échoué")
 
   - id: create_fact_prime_sportive
     type: io.kestra.plugin.jdbc.postgresql.Queries
     url: jdbc:postgresql://postgres:5432/kestra
     username: kestra
     password: k3str4
+    retry:
+      type: constant
+      maxAttempt: 3
+      interval: PT15S
     sql: |
-
+      
       DROP TABLE IF EXISTS poc_fact_prime_sportive;
 
       CREATE TABLE poc_fact_prime_sportive AS
@@ -764,8 +814,12 @@ tasks:
     url: jdbc:postgresql://postgres:5432/kestra
     username: kestra
     password: k3str4
+    retry:
+      type: constant
+      maxAttempt: 3
+      interval: PT15S
     sql: |
-
+      
       DROP TABLE IF EXISTS poc_fact_bien_etre;
 
       CREATE TABLE poc_fact_bien_etre AS
@@ -803,8 +857,12 @@ tasks:
     url: jdbc:postgresql://postgres:5432/kestra
     username: kestra
     password: k3str4
+    retry:
+      type: constant
+      maxAttempt: 3
+      interval: PT15S
     sql: |
-
+      
       DROP TABLE IF EXISTS poc_kpi_global;
 
       CREATE TABLE poc_kpi_global AS
@@ -816,7 +874,6 @@ tasks:
         rh.salaire_brut,
 
         emp.distance_km,
-        emp.declaration_valide,
 
         prime.eligible_prime,
         prime.montant_prime,
@@ -834,7 +891,6 @@ tasks:
 
       LEFT JOIN poc_fact_bien_etre be
         ON rh.id_salarie = be.id_salarie;
-
 
   - id: create_kpi_global_monitoring
     type: io.kestra.plugin.scripts.python.Script
@@ -862,20 +918,20 @@ tasks:
       Kestra.outputs({
           "nb_kpi_rows": len(df_kpi)
       })
-
-# MONITORING
+      
+  # MONITORING
 
   - id: log_final_summary
     type: io.kestra.plugin.core.log.Log
     message: |
       Résumé du chargement des fichiers :
-      - RH rows: {{ outputs.load_raw_tables.vars.rh_rows | default('N/A') }}
-      - SPORT rows: {{ outputs.load_raw_tables.vars.sport_rows | default('N/A') }}
-      - Activités générées: {{ outputs.generate_sport_activity.vars.nb_activities | default('N/A') }}
+      # - RH rows: {{ outputs.load_raw_tables.vars.rh_rows | default('N/A') }}
+      # - SPORT rows: {{ outputs.load_raw_tables.vars.sport_rows | default('N/A') }}
+      - Activités générées: {{ outputs.consume_kafka_sport_activity.vars.nb_activities_kafka | default('N/A') }}
       - Salariés KPI global: {{ outputs.create_kpi_global_monitoring.vars.nb_kpi_rows | default('N/A') }}
-
-
+      
 errors:
+
   - id: notify_failure_email
     type: io.kestra.plugin.email.MailSend   # Indique que la tâche va envoyer un e-mail en cas d’échec.
     from: "noreply@test.fr"   # Adresse de l’expéditeur (fictive pour l’exemple)
@@ -887,13 +943,24 @@ errors:
       Execution : {{ execution.id }}<br>
       Statut : {{ execution.state }}
       Task en erreur : {{ task.id }}<br>
-# Pour un environnement réel, l'envoi d'email nécessite la configuration d'un SMTP (Simple Mail Transfer Protocol) avec host (adresse du serveur), port,  # username et password pour l'authentification. Cette configuration permet l'envoi des email. Pour ce POC, cela n'est pas nécessaire.
- 
+  # Pour un environnement réel, l'envoi d'email nécessite la configuration d'un SMTP (Simple Mail Transfer Protocol) avec host (adresse du serveur), port,  # username et password pour l'authentification. Cette configuration permet l'envoi des email. Pour ce POC, cela n'est pas nécessaire.
+
   - id: notify_failure_slack
-    type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
-    #url: "{{ secret('SLACK_WEBHOOK') }}"   # webhook Slack stocké dans les secrets
-    url: "${SLACK_WEBHOOK}"     # webhook Slack stocké dans .env
-    payload: |
-      {
-        "text": "⚠️ Test de l'envoie de message slack. Le workflow *{{ flow.id }}* ({{ flow.namespace }}) a échoué !\nExecution : {{ execution.id }}\nTask en erreur : {{ task.id }}"
-      }
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    script: |
+      import os
+      import requests
+
+      WEBHOOK_URL = os.getenv("SLACK_WEBHOOK")  # récupère ton webhook depuis l'env
+      if not WEBHOOK_URL:
+          raise ValueError("La variable SLACK_WEBHOOK n'est pas définie !")
+
+      message = "Test de l'envoi de message Slack. Le workflow *{{ flow.id }}* ({{ flow.namespace }}) a échoué !\nExecution : {{ execution.id }}\nTask en erreur : {{ task.id }}"
+
+      try:
+          requests.post(WEBHOOK_URL, json={"text": message})
+      except Exception as e:
+          print(f"Erreur envoi Slack : {e}")
+          raise

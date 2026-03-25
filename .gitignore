@@ -1,5 +1,6 @@
 activite_generer.py
 k_flow
+flow_avant_redp
 .env
 __pycache__/
 *.pyc
