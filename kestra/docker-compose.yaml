@@ -124,16 +124,16 @@ services:
       sleep 15 &&
       rpk topic create sport_activity --brokers redpanda-0:9092 || true
       "
-  # producer: # Service de production des activités sportives
-  #   build: ../producer # Contexte de build (dossier producer)
-  #   container_name: producer # Nom du conteneur
-  #   depends_on:
-  #     - redpanda-0 # Attend que le broker Kafka soit démarré avant de démarrer le producer
-  #     - postgres # Attend que PostgreSQL soit démarré avant de démarrer le producer
-  #   env_file:
-  #     - ../.env # Fichier .env contenant les variables d'environnement
-  #   volumes:
-  #     - ../sport_data_solution:/data/sport_data_solution # Montage du volume persistant pour stocker les données de sport_data_solution
-  #     - ../producer:/app # Montage du volume persistant pour stocker le code du producer
-  #   networks:
-  #     - default # Réseau par défaut
+  producer: # Service de production des activités sportives
+    build: ../producer # Contexte de build (dossier producer)
+    container_name: producer # Nom du conteneur
+    depends_on:
+      - redpanda-0 # Attend que le broker Kafka soit démarré avant de démarrer le producer
+      - postgres # Attend que PostgreSQL soit démarré avant de démarrer le producer
+    env_file:
+      - ../.env # Fichier .env contenant les variables d'environnement
+    volumes:
+      - ../sport_data_solution:/data/sport_data_solution # Montage du volume persistant pour stocker les données de sport_data_solution
+      - ../producer:/app # Montage du volume persistant pour stocker le code du producer
+    networks:
+      - default # Réseau par défaut
