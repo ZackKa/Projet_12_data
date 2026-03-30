@@ -349,14 +349,14 @@ Les données finales permettent de visualiser :
 
 ## 17. Instructions pour lancer le workflow
 
-1. Lancer Docker Compose :
+1. Lancer `docker-compose.yaml` qui se trouve dans le dossier kestra :
 !!! Attention avant de lancer cette commande assurer vous d'avoir lancer docker (linux) ou docker desktop (windows/macOs)
 ```bash
 docker-compose up -d
+```
 
 **A savoir** cette commande lance tout le projet, donc en cas de réexécution du projet, pensez à commenter le produceur dans docker-compose.yaml du dossier Kestra, pour ne pas avoir de nouvelles données sportives créées qui seront ajoutées aux anciennes.
 
-```
 2. Vérifier que les conteneurs postgres et kestra sont en ligne.
 
 3. Accéder à l’interface Kestra sur http://localhost:8080.

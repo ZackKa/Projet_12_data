@@ -1,7 +1,7 @@
-psycopg2-binary
-kafka-python
+psycopg2-binary==2.9.11
+kafka-python==2.3.0
 Faker==40.11.0
-pandas
-openpyxl
-requests
-python-dotenv
+pandas==2.3.3
+openpyxl==3.1.5
+requests==2.32.5
+python-dotenv==1.2.2

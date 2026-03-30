@@ -1,22 +1,22 @@
-id: pipeline_sport_p12
-namespace: sport_data_solution
+id: pipeline_sport_p12 # Identifiant unique du workflow Kestra
+namespace: sport_data_solution  # Namespace pour organiser les workflows
 
-description: >
+description: > # Description globale du pipeline
   Pipeline d'automatisation pour le calcul des primes et des jours de congés pour les employés sportifs.
 
 tasks:
-  - id: start
-    type: io.kestra.plugin.core.log.Log
-    message: "Démarrage du workflow Sport Data Solution"
+  - id: start  # Identifiant de la tâche
+    type: io.kestra.plugin.core.log.Log  # Plugin Kestra pour écrire dans les logs
+    message: "Démarrage du workflow Sport Data Solution"   # Message affiché dans les logs au lancement
 
-  - id: ingestion_all
-    type: io.kestra.plugin.scripts.shell.Commands     # On utilise le plugin "shell.Commands" pour lancer des commandes Linux
+  - id: ingestion_all   # Tâche d’ingestion des fichiers sources
+    type: io.kestra.plugin.scripts.shell.Commands    # On utilise le plugin "shell.Commands" pour lancer des commandes Linux
     taskRunner:
       type: io.kestra.plugin.core.runner.Process     # Le runner PROCESS exécute les commandes directement sur le système contrairement a DOCKER qui execute sur docker
     retry:
-      type: constant
-      maxAttempt: 3
-      interval: PT30S
+      type: constant # Définit une stratégie de retry constante
+      maxAttempt: 3 # Nombre maximum de tentatives en cas d’échec
+      interval: PT30S # Intervalle de 30 secondes entre chaque tentative
     commands:
       - mkdir -p data       # Création du dossier "data", -p évite une erreur si le dossier existe
       - cp /data/sport_data_solution/Donnees_RH.xlsx data/rh.xlsx     # Copie du fichier Rh depuis le répertoire source vers le dossier de travail
@@ -24,20 +24,20 @@ tasks:
       - echo "Taille des fichiers :"      # Affichage d’un message pour la lisibilité des logs
       - echo "$(ls -lh data/)"            # Affiche les fichiers avec leur taille pour vérifier qu'ils ont bien été copiés
     outputFiles:
-      - data/rh.xlsx       # Déclaration des fichiers de sortie, Kestra pourra les réutiliser dans les tasks suivantes
+      - data/rh.xlsx       # Déclaration des fichiers de sortie (output), Kestra pourra les réutiliser dans les tasks suivantes
       - data/sportive.xlsx
 
-  - id: check_data
+  - id: check_data  # Tâche de vérification et exploration des données
     type: io.kestra.plugin.scripts.python.Script    # Utilisation d’un script Python
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
     inputFiles:
       rh.xlsx: "{{ outputs.ingestion_all.outputFiles['data/rh.xlsx'] }}"        # Fichiers d’entrée récupérés depuis l’étape "ingestion_all"
-      sportive.xlsx: "{{ outputs.ingestion_all.outputFiles['data/sportive.xlsx'] }}"        # Kestra injecte les fichiers dans le répertoire de travail du script
+      sportive.xlsx: "{{ outputs.ingestion_all.outputFiles['data/sportive.xlsx'] }}"  # Kestra injecte les fichiers dans le répertoire de travail du script
     # Script Python exécuté par la tâche
     script: |
-      import pandas as pd 
-      from pathlib import Path
+      import pandas as pd # Bibliothèque pour manipuler les données
+      from pathlib import Path # Permet de gérer les chemins de fichiers
 
       # Dictionnaire des fichiers, Chaque fichier reçoit un nom logique pour simplifier leur traitement.
       files = {
@@ -69,9 +69,9 @@ tasks:
           print("\n--- DOUBLONS ---")
           print(df.duplicated().sum())
 
-  - id: create_config_parameters
-    type: io.kestra.plugin.jdbc.postgresql.Queries
-    url: jdbc:postgresql://postgres:5432/kestra
+  - id: create_config_parameters   # Tâche pour créer et initialiser les paramètres de configuration métier
+    type: io.kestra.plugin.jdbc.postgresql.Queries    # Plugin Kestra pour exécuter des requêtes SQL sur PostgreSQL
+    url: jdbc:postgresql://postgres:5432/kestra     # URL de connexion à la base PostgreSQL
     username: kestra
     password: k3str4
     retry:
@@ -93,8 +93,8 @@ tasks:
       ('max_walk_km', 15),
       ('max_bike_km', 25);
 
-  - id: create_raw_tables
-    type: io.kestra.plugin.jdbc.postgresql.Queries
+  - id: create_raw_tables     # Tâche pour créer les tables brutes RH et sportives
+    type: io.kestra.plugin.jdbc.postgresql.Queries    # Exécution de requêtes SQL PostgreSQL
     url: jdbc:postgresql://postgres:5432/kestra
     username: kestra
     password: k3str4
@@ -123,7 +123,7 @@ tasks:
         sport TEXT
       );
 
-  - id: load_raw_tables
+  - id: load_raw_tables     # Tâche pour charger les fichiers Excel dans les tables PostgreSQL
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
@@ -132,18 +132,19 @@ tasks:
         maxAttempt: 3          # nombre de tentatives
         interval: PT30S        # intervalle entre tentatives (ISO 8601 : PT30S = 30 secondes)
     inputFiles:
-      rh.xlsx: "{{ outputs.ingestion_all.outputFiles['data/rh.xlsx'] }}"
-      sportive.xlsx: "{{ outputs.ingestion_all.outputFiles['data/sportive.xlsx'] }}"
+      rh.xlsx: "{{ outputs.ingestion_all.outputFiles['data/rh.xlsx'] }}"    # Injection du fichier RH depuis l’étape d’ingestion
+      sportive.xlsx: "{{ outputs.ingestion_all.outputFiles['data/sportive.xlsx'] }}"    # Injection du fichier sport
     script: |
-      import pandas as pd
-      from sqlalchemy import create_engine
+      import pandas as pd # Bibliothèque pour manipuler les données
+      from sqlalchemy import create_engine # Pour se connecter à PostgreSQL via SQLAlchemy
+      #SQLAlchemy sert à interagir avec des bases de données en Python de manière plus simple et orientée objets, sans écrire directement du SQL.
 
       # connexion postgres
-      engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
+      engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra") # Crée le moteur SQLAlchemy pour PostgreSQL
 
       # lecture fichiers
-      df_rh = pd.read_excel("rh.xlsx")
-      df_sport = pd.read_excel("sportive.xlsx")
+      df_rh = pd.read_excel("rh.xlsx")  # Lit le fichier RH Excel
+      df_sport = pd.read_excel("sportive.xlsx")   # Lit le fichier Sportive Excel
 
       # renommage colonnes pour correspondre aux tables SQL
       df_rh.columns = [
@@ -159,47 +160,49 @@ tasks:
           "adresse",
           "moyen_deplacement"
       ]
+      # Assure la correspondance entre colonnes Excel et table SQL RH
 
       df_sport.columns = [
           "id_salarie",
           "sport"
       ]
+      # Assure la correspondance entre colonnes Excel et table SQL sport
 
-      print("RH rows:", len(df_rh))
-      print("SPORT rows:", len(df_sport))
+      print("RH rows:", len(df_rh))   # Affiche le nombre de lignes RH lues
+      print("SPORT rows:", len(df_sport))   # Affiche le nombre de lignes Sportives lues
 
       # insertion dans postgres if_exists="replace" pour remplacer et if_exists="append" pour ajouter
-      df_rh.to_sql("poc_rh_raw", engine, if_exists="replace", index=False)
-      df_sport.to_sql("poc_sportive_raw", engine, if_exists="replace", index=False)
+      df_rh.to_sql("poc_rh_raw", engine, if_exists="replace", index=False)  # Insère les données RH dans PostgreSQL
+      df_sport.to_sql("poc_sportive_raw", engine, if_exists="replace", index=False)   # Insère les données Sportive dans PostgreSQL
 
       print("Insertion terminée")
 
 
-      from kestra import Kestra
+      from kestra import Kestra   # Module Kestra pour retourner des outputs
       Kestra.outputs({
           "rh_rows": len(df_rh),
           "sport_rows": len(df_sport)
-      })
+      })  # Retourne les informations vers Kestra pour usage dans d’autres tâches
 
-  - id: test_poc_rh_raw
+  - id: test_poc_rh_raw   # Tâche pour tester la qualité des données RH brutes
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
         type: io.kestra.plugin.core.runner.Process
     script: |
-        import pytest
-        import pandas as pd
-        from sqlalchemy import create_engine
-        import sys
-        import subprocess
+        import pytest # Framework de tests Python
+        import pandas as pd # Manipulation des données
+        from sqlalchemy import create_engine # Connexion à PostgreSQL
+        import sys  # sys sert à interagir avec l’environnement d’exécution Python lui-même
+        import subprocess # Pour exécuter pytest en sous-process
 
         test_code = '''import pandas as pd
         from sqlalchemy import create_engine
 
         def test_poc_rh_raw():
-            engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
-            df = pd.read_sql("SELECT * FROM poc_rh_raw", engine)
+            engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")    # Connexion à la DB
+            df = pd.read_sql("SELECT * FROM poc_rh_raw", engine)    # Lecture de la table RH brute
 
-            errors = []
+            errors = []   # Liste pour stocker les erreurs de tests
 
             # Valeurs manquantes
             missing = df.isnull().sum()
@@ -239,16 +242,16 @@ tasks:
                 errors.append("date_naissance trop récente / âge < 18 ans à l'embauche")
 
             assert not errors, f"Tests échoués : {errors}"'''
-
+        # Création du fichier temporaire et exécution du test
         with open("tmp_test_poc_rh_raw.py", "w") as f:
             f.write(test_code)
 
-        result = subprocess.run([sys.executable, "-m", "pytest", "tmp_test_poc_rh_raw.py", "-v"], check=False)
+        result = subprocess.run([sys.executable, "-m", "pytest", "tmp_test_poc_rh_raw.py", "-v"], check=False)    # Exécution pytest
 
         if result.returncode != 0:
-            raise Exception("Le test pytest a échoué")
+            raise Exception("Le test pytest a échoué")    # Stoppe la task si test échoue
 
-  - id: test_poc_sportive_raw
+  - id: test_poc_sportive_raw   # Tâche pour tester la qualité des données Sportives brutes
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
         type: io.kestra.plugin.core.runner.Process
@@ -292,7 +295,7 @@ tasks:
         if result.returncode != 0:
             raise Exception("Le test pytest a échoué")
 
-  - id: create_rh_enriched_table
+  - id: create_rh_enriched_table    # Tâche pour créer la tables pour calculer les distances domicile-travail
     type: io.kestra.plugin.jdbc.postgresql.Query
     url: jdbc:postgresql://postgres:5432/kestra
     username: kestra
@@ -313,7 +316,7 @@ tasks:
         declaration_valide BOOLEAN
       );
 
-  - id: distances_domicile_travail
+  - id: distances_domicile_travail    # Tâche pour calculer les distances domicile-travail
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
@@ -322,29 +325,29 @@ tasks:
         maxAttempt: 3          # nombre de tentatives
         interval: PT30S        # intervalle entre tentatives (ISO 8601 : PT30S = 30 secondes)
     script: |
-      import pandas as pd
-      import requests
-      import time
-      import os
-      from sqlalchemy import create_engine
+      import pandas as pd        # Librairie pour manipulation de données
+      import requests            # Librairie pour appels HTTP
+      import time                # Librairie pour gestion des délais
+      import os                  # Librairie pour accéder aux variables d'environnement
+      from sqlalchemy import create_engine  # Connexion à une base SQL
 
-      API_KEY = os.getenv("ORS_API_KEY")
+      API_KEY = os.getenv("ORS_API_KEY")    # Récupère la clé API depuis les variables d'environnement
 
-      entreprise = "1362 Av. des Platanes, 34970 Lattes"
+      entreprise = "1362 Av. des Platanes, 34970 Lattes"    # Adresse de l'entreprise pour le calcul des distances
 
       print("Connexion à PostgreSQL...")
       engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
 
       print("Lecture des données RH...")
-      df = pd.read_sql("SELECT * FROM poc_rh_raw", engine)
+      df = pd.read_sql("SELECT * FROM poc_rh_raw", engine)    # Lecture de la table RH brute depuis PostgreSQL
 
       print("Lecture des paramètres...")
-      params = pd.read_sql("SELECT * FROM poc_config_parameters", engine)
+      params = pd.read_sql("SELECT * FROM poc_config_parameters", engine)   # Lecture des paramètres de configuration
 
-      param_dict = dict(zip(params["param_name"], params["value"]))
+      param_dict = dict(zip(params["param_name"], params["value"]))   # Conversion des paramètres en dictionnaire
 
-      max_walk_km = param_dict["max_walk_km"]
-      max_bike_km = param_dict["max_bike_km"]
+      max_walk_km = param_dict["max_walk_km"]  # Distance maximale autorisée pour la marche
+      max_bike_km = param_dict["max_bike_km"]  # Distance maximale autorisée pour le vélo
 
       print("Paramètres chargés :")
       print("max_walk_km =", max_walk_km)
@@ -352,100 +355,103 @@ tasks:
 
       print(f"{len(df)} salariés à traiter")
 
-      cache = {}
+      cache = {}    # Cache pour éviter de géocoder plusieurs fois la même adresse
 
-      def geocode(adresse, retries=3):
+      def geocode(adresse, retries=3):    # Fonction pour convertir une adresse en coordonnées GPS
+        # La fonction geocode transforme n’importe quelle adresse en coordonnées GPS et stocke le résultat pour éviter de répéter les appels API.
 
           if adresse in cache:
-              return cache[adresse]
+              return cache[adresse]   # Retourne les coordonnées déjà en cache
 
-          url = "https://api.openrouteservice.org/geocode/search"
-          params = {"api_key": API_KEY, "text": adresse}
+          url = "https://api.openrouteservice.org/geocode/search"   # Endpoint API de géocodage
+          params = {"api_key": API_KEY, "text": adresse}    # Paramètres pour l'API
 
-          for i in range(retries):
+          for i in range(retries):    # Tentatives en cas d'erreur
 
               try:
-                  r = requests.get(url, params=params).json()
+                  r = requests.get(url, params=params).json()   # Requête GET pour géocoder
 
-                  time.sleep(0.2)   # pause API
+                  time.sleep(0.2)   # pause API pour éviter la surcharge de l'API
 
                   if r["features"]:
-                      coords = r["features"][0]["geometry"]["coordinates"]
-                      result = (coords[1], coords[0])
-                      cache[adresse] = result
+                      coords = r["features"][0]["geometry"]["coordinates"]  # Récupération des coordonnées
+                      result = (coords[1], coords[0])  # Conversion en (latitude, longitude)
+                      cache[adresse] = result  # Stockage dans le cache
                       return result
 
               except Exception as e:
-                  print(f"Erreur géocodage {adresse} tentative {i+1}: {e}")
-                  time.sleep(2)
+                  print(f"Erreur géocodage {adresse} tentative {i+1}: {e}") # Log des erreurs
+                  time.sleep(2) # Attente avant la prochaine tentative
 
-          return (None, None)
+          return (None, None) # Retourne None si échec du géocodage
 
 
       print("Géocodage de l'adresse de l'entreprise...")
 
-      lat_ent, lon_ent = geocode(entreprise)
+      lat_ent, lon_ent = geocode(entreprise)  # Géocodage de l'entreprise
 
       if lat_ent is None:
-          raise Exception("Impossible de géocoder l'adresse de l'entreprise")
+          raise Exception("Impossible de géocoder l'adresse de l'entreprise")   # Erreur si géocodage échoue
 
       print(f"Coordonnées entreprise : {lat_ent}, {lon_ent}")
 
 
-      def distance(adresse):
+      def distance(adresse):    # Fonction pour calculer la distance entre domicile et entreprise
+        #La fonction distance calcule la distance réelle domicile-travail via API, en utilisant les coordonnées GPS et les routes existantes
 
-          lat1, lon1 = geocode(adresse)
+          lat1, lon1 = geocode(adresse)   # Géocodage de l'adresse du salarié
 
           if None in [lat1, lon1, lat_ent, lon_ent]:
-              return None
+              return None   # Retourne None si géocodage impossible
 
-          url = "https://api.openrouteservice.org/v2/directions/driving-car"
-          headers = {"Authorization": API_KEY}
-          body = {"coordinates": [[lon1, lat1], [lon_ent, lat_ent]]}
+          url = "https://api.openrouteservice.org/v2/directions/driving-car"    # Endpoint pour calculer itinéraire
+          headers = {"Authorization": API_KEY}    # Header avec la clé API
+          body = {"coordinates": [[lon1, lat1], [lon_ent, lat_ent]]}    # Coordonnées départ/arrivée
 
-          for i in range(3):
+          for i in range(3):   # Tentatives pour l'API
 
               try:
-                  r = requests.post(url, json=body, headers=headers).json()
+                  r = requests.post(url, json=body, headers=headers).json()   # Requête POST pour récupérer distance
 
                   time.sleep(0.2)   # pause API
 
+                  # S’il y a une clé "routes", cela veut dire que l’API a trouvé un trajet valide.
                   if "routes" in r:
-                      return r["routes"][0]["summary"]["distance"] / 1000
+                      return r["routes"][0]["summary"]["distance"] / 1000   # Conversion de mètre en km
 
               except Exception as e:
-                  print(f"Erreur distance tentative {i+1}: {e}")
+                  print(f"Erreur distance tentative {i+1}: {e}")    # Log des erreurs
                   time.sleep(2)
 
           return None
 
 
-      rows = []
+      rows = []   # Liste pour stocker les résultats
 
       print("Calcul des distances domicile-travail...")
 
-      for i, row in df.iterrows():
+      for i, row in df.iterrows():    # Boucle sur chaque salarié
 
           if i % 10 == 0:
-              print(f"{i} salariés traités...")
+              print(f"{i} salariés traités...")     # Progression tous les 10 salariés
 
           dist_km = None
           valide = False
 
           try:
 
-              dist_km = distance(row["adresse"])
+              dist_km = distance(row["adresse"])  # Calcul de la distance domicile-travail
 
-              transport = str(row["moyen_deplacement"]).lower()
+              transport = str(row["moyen_deplacement"]).lower()   # Normalisation des caracteres du moyen de transport
 
               if "marche" in transport or "running" in transport:
-                  valide = dist_km is not None and dist_km <= max_walk_km
+                  valide = dist_km is not None and dist_km <= max_walk_km   # Validation pour marche/run
 
               elif "vélo" in transport or "trottinette" in transport:
-                  valide = dist_km is not None and dist_km <= max_bike_km
+                  valide = dist_km is not None and dist_km <= max_bike_km   # Validation pour vélo/trottinette
 
           except Exception as e:
-              print(f"Erreur pour salarié {row['id_salarie']} : {e}")
+              print(f"Erreur pour salarié {row['id_salarie']} : {e}")   # Log des erreurs pour un salarié
 
           rows.append({
               "id_salarie": row["id_salarie"],
@@ -455,11 +461,11 @@ tasks:
               "moyen_deplacement": row["moyen_deplacement"],
               "distance_km": dist_km,
               "declaration_valide": valide
-          })
+          })    # Ajout des résultats dans la liste
 
 
       print("Transformation en DataFrame final...")
-      df_out = pd.DataFrame(rows)
+      df_out = pd.DataFrame(rows)   # Conversion de la liste en DataFrame
 
       print("Insertion dans PostgreSQL...")
 
@@ -478,7 +484,7 @@ tasks:
           "nb_distances": len(df_out)
       })
 
-  - id: create_sport_activity_table
+  - id: create_sport_activity_table   # Tâche pour créer la tables pour consommer les données redpanda
     type: io.kestra.plugin.jdbc.postgresql.Queries
     url: jdbc:postgresql://postgres:5432/kestra
     username: kestra
@@ -500,7 +506,7 @@ tasks:
       );
 
 
-  - id: consume_kafka_sport_activity
+  - id: consume_kafka_sport_activity    # Tâche pour consommer les données redpanda
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
@@ -509,15 +515,15 @@ tasks:
       maxAttempt: 3
       interval: PT30S
     script: |
-      import json
-      import pandas as pd
-      from kafka import KafkaConsumer
-      from sqlalchemy import create_engine
-      from datetime import datetime
-      import time
+      import json                       # Pour décoder les messages JSON de Kafka
+      import pandas as pd               # Pour manipulation des données en DataFrame
+      from kafka import KafkaConsumer   # Pour consommer les messages depuis Kafka/Redpanda
+      from sqlalchemy import create_engine  # Pour connexion à PostgreSQL
+      from datetime import datetime     # Pour manipulation des dates
+      import time                       # Pour pauses 
 
-      KAFKA_BROKER = "redpanda-0:9092"
-      TOPIC = "sport_activity"
+      KAFKA_BROKER = "redpanda-0:9092"   # Adresse du broker Redpanda
+      TOPIC = "sport_activity"           # Nom du topic Kafka à consommer
 
       # Connexion PostgreSQL
       engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
@@ -526,37 +532,37 @@ tasks:
       # Création du consumer Kafka
       consumer = KafkaConsumer(
           TOPIC,
-          bootstrap_servers=[KAFKA_BROKER],
-          value_deserializer=lambda m: json.loads(m.decode('utf-8')),
-          auto_offset_reset='earliest',
-          enable_auto_commit=True,
-          consumer_timeout_ms=5000
+          bootstrap_servers=[KAFKA_BROKER],                     # Serveur Kafka/Redpanda
+          value_deserializer=lambda m: json.loads(m.decode('utf-8')),  # Décodage JSON des messages
+          auto_offset_reset='earliest',                          # Lire depuis le début du topic si offset manquant
+          enable_auto_commit=True,                                # Valider automatiquement la consommation
+          consumer_timeout_ms=5000                                # Timeout si aucun message reçu
       )
 
-      activities = []
-      for message in consumer:
-          activity = message.value
+      activities = []  # Liste pour stocker les activités reçues
+      for message in consumer:  # Boucle sur tous les messages du topic
+          activity = message.value  # Récupération du contenu JSON
           # Normalisation date
           if "date_debut" in activity:
-              activity["date_debut"] = pd.to_datetime(activity["date_debut"])
-          activities.append(activity)
+              activity["date_debut"] = pd.to_datetime(activity["date_debut"])  # Convertit en datetime pandas
+          activities.append(activity)  # Ajout dans la liste
 
-      if activities:
-          df = pd.DataFrame(activities)
-          print(f"{len(df)} activités reçues depuis Kafka")
-          # Insertion en table clean
+      if activities:  # Si des activités ont été reçues
+          df = pd.DataFrame(activities)  # Conversion en DataFrame
+          print(f"{len(df)} activités reçues depuis Kafka")  # Log du nombre d'activités
+          # Insertion en table clean (vide)
           with engine.begin() as conn:
               conn.exec_driver_sql("TRUNCATE TABLE poc_sport_activity RESTART IDENTITY;")
-          df.to_sql("poc_sport_activity", engine, if_exists="append", index=False)
+          df.to_sql("poc_sport_activity", engine, if_exists="append", index=False)    # Insertion dans PostgreSQL
       else:
-          print("Aucune activité reçue depuis Kafka")
+          print("Aucune activité reçue depuis Kafka")   # Log si aucune activité
 
       from kestra import Kestra
       Kestra.outputs({
           "nb_activities_kafka": len(activities)
       })
 
-  - id: create_table_message_slack
+  - id: create_table_message_slack    # Tâche pour créer la tables pour l'historique des messages slack
     type: io.kestra.plugin.jdbc.postgresql.Queries
     url: jdbc:postgresql://postgres:5432/kestra
     username: kestra
@@ -576,32 +582,30 @@ tasks:
           message TEXT NOT NULL
       );
 
-# DROP TABLE IF EXISTS poc_sport_activity_messages; pour supprimer la table des messages pour tester de nouvelles activités
-
-  - id: send_encouragement_messages
+  - id: send_encouragement_messages    # Tâche pour envoyer des messages d'encouragement sur Slack
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
     retry:
       type: constant
-      maxAttempt: 3
-      interval: PT30S
+      maxAttempt: 3          # Réessayer la tâche 3 fois en cas d'échec
+      interval: PT30S        # Intervalle de 30 secondes entre chaque tentative
     script: |
-      import pandas as pd
-      from sqlalchemy import create_engine, text
-      import requests
-      from faker import Faker
-      import os
-      import time
+      import pandas as pd                      # Pour manipuler les données en DataFrame
+      from sqlalchemy import create_engine, text  # Connexion et requêtes SQL
+      import requests                          # Pour envoyer les messages via API HTTP
+      from faker import Faker                   # Pour choisir aléatoirement des templates
+      import os                                # Pour lire les variables d'environnement
+      import time                               # Pour pauses
 
-      fake = Faker("fr_FR")
-      WEBHOOK_URL = os.getenv("SLACK_WEBHOOK")  # lecture du webhook depuis .env
+      fake = Faker("fr_FR")                     # Faker en français pour templates aléatoires
+      WEBHOOK_URL = os.getenv("SLACK_WEBHOOK")  # Lecture de l'URL du webhook Slack
       if not WEBHOOK_URL:
-          raise ValueError("La variable SLACK_WEBHOOK n'est pas définie !")
+          raise ValueError("La variable SLACK_WEBHOOK n'est pas définie !")  # Stop si webhook absent
 
-      engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
+      engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")  # Connexion PostgreSQL
 
-      # Templates naturels
+      # Templates de messages Slack
       slack_templates = [
           "🎉 Bravo {prenom} {nom} ! Super sortie de {sport} le {date} ! 💪",
           "🏅 {prenom} {nom} a fait une belle séance de {sport} le {date} ! Continue comme ça !",
@@ -611,7 +615,7 @@ tasks:
       ]
 
       # Lire toutes les activités
-      #activities = pd.read_sql("SELECT * FROM poc_sport_activity", engine)
+      # activities = pd.read_sql("SELECT * FROM poc_sport_activity", engine)
       # JOIN pour récupérer prénom / nom
       activities = pd.read_sql("""
           SELECT a.*, r.prenom, r.nom
@@ -620,45 +624,54 @@ tasks:
               ON a.id_salarie = r.id_salarie
       """, engine)
 
-      for _, row in activities.iterrows():
-          id_activite = row['id_activite']
+      max_attempts = 3       # Nombre de tentatives pour l'envoi Slack
+      retry_interval = 5     # Délai en secondes entre chaque tentative
 
-          # Vérifier si message déjà envoyé
+      for _, row in activities.iterrows():  # Boucle sur chaque activité
+          id_activite = row['id_activite']  # ID unique de l'activité
+
+          # Vérifier si un message a déjà été envoyé
           msg_exist = pd.read_sql(
               "SELECT 1 FROM poc_sport_activity_messages WHERE id_activite = %s",
               engine, params=(id_activite,)
           )
 
-          if msg_exist.empty:
+          if msg_exist.empty:  # Si aucun message existant
               # Générer message naturel
-              template = fake.random_element(slack_templates)
+              template = fake.random_element(slack_templates)  # Choix aléatoire d'un template
 
               message = template.format(
-                  prenom = row['prenom'] if pd.notnull(row['prenom']) else "Utilisateur",
-                  nom = row['nom'] if pd.notnull(row['nom']) else "",
-                  sport=row['type_sport'],
-                  date=pd.to_datetime(row['date_debut']).strftime('%d/%m/%Y')
+                  prenom=row['prenom'] if pd.notnull(row['prenom']) else "Utilisateur",  # Valeur par défaut si prénom manquant
+                  nom=row['nom'] if pd.notnull(row['nom']) else "",                         # Valeur par défaut si nom manquant
+                  sport=row['type_sport'],                                                 # Type de sport
+                  date=pd.to_datetime(row['date_debut']).strftime('%d/%m/%Y')              # Format date JJ/MM/AAAA
               )
 
-              # Envoyer message
-              try:
-                  requests.post(WEBHOOK_URL, json={"text": message})
-                  # time.sleep(0.05)  # éviter spam Slack
-              except Exception as e:
-                  print(f"Erreur envoi Slack pour {id_activite} : {e}")
-                  continue
+              # Boucle de retry pour l'envoi Slack
+              for attempt in range(1, max_attempts + 1):
+                  try:
+                      requests.post(WEBHOOK_URL, json={"text": message})
+                      print(f"Message envoyé pour activité {id_activite} (tentative {attempt})")
+                      
+                      # Historisation du message dans la base uniquement si envoi réussi
+                      with engine.begin() as conn:
+                          conn.execute(
+                              text("INSERT INTO poc_sport_activity_messages (id_activite, message) VALUES (:id_activite, :message)"),
+                              {"id_activite": id_activite, "message": message}
+                          )
+                      break  # Sort de la boucle de retry si succès
 
-              # Historiser le message
-              with engine.begin() as conn:
-                conn.execute(
-                    text("INSERT INTO poc_sport_activity_messages (id_activite, message) VALUES (:id_activite, :message)"),
-                    {"id_activite": id_activite, "message": message}
-                )
-              print(f"Message envoyé pour activité {id_activite}")
+                  except Exception as e:
+                      print(f"Erreur envoi Slack pour {id_activite} à la tentative {attempt} : {e}")
+                      if attempt < max_attempts:
+                          print(f"Nouvelle tentative dans {retry_interval} secondes...")
+                          time.sleep(retry_interval)
+                      else:
+                          print(f"Échec après {max_attempts} tentatives pour activité {id_activite}")
           else:
-              print(f"Message déjà envoyé pour activité {id_activite}, skip")
+              print(f"Message déjà envoyé pour activité {id_activite}, skip")  # Message déjà existant, ne pas renvoyer
 
-  - id: create_sport_activity_clean_table
+  - id: create_sport_activity_clean_table   # Tâche pour créer une table "propre" d'activités sportives
     type: io.kestra.plugin.jdbc.postgresql.Queries
     url: jdbc:postgresql://postgres:5432/kestra
     username: kestra
@@ -770,7 +783,7 @@ tasks:
       if result.returncode != 0:
           raise Exception("Le test pytest a échoué")
 
-  - id: create_fact_prime_sportive
+  - id: create_fact_prime_sportive    # Tâche pour créer la table des primes sportives des salariés
     type: io.kestra.plugin.jdbc.postgresql.Queries
     url: jdbc:postgresql://postgres:5432/kestra
     username: kestra
@@ -780,6 +793,13 @@ tasks:
       maxAttempt: 3
       interval: PT15S
     sql: |
+      /*
+      Cette task PostgreSQL crée la table des primes sportives poc_fact_prime_sportive.
+      Elle combine les données RH (poc_rh_raw) et les distances calculées (poc_employees_enriched) pour déterminer :
+      - eligibility : le salarié a-t-il rempli correctement sa déclaration ?
+      - montant de la prime : calculé en multipliant le salaire par le taux de prime défini dans poc_config_parameters.
+      Permet d’obtenir une table prête à être utilisée pour la paie ou le reporting.
+      */
       
       DROP TABLE IF EXISTS poc_fact_prime_sportive;
 
@@ -819,7 +839,14 @@ tasks:
       maxAttempt: 3
       interval: PT15S
     sql: |
-      
+      /*
+      Cette task PostgreSQL crée la table des primes bien-être poc_fact_bien_etre.
+      Elle combine les données RH (poc_rh_raw) et les activités sportives nettoyées (poc_sport_activity_clean) pour déterminer :
+      - nb_activites : nombre d'activités sportives réalisées par le salarié
+      - eligible_bien_etre : le salarié a-t-il atteint le nombre minimum d'activités défini dans poc_config_parameters
+      Permet d’obtenir une table prête à être utilisée pour le reporting bien-être ou pour le calcul de primes associées.
+      */
+
       DROP TABLE IF EXISTS poc_fact_bien_etre;
 
       CREATE TABLE poc_fact_bien_etre AS
@@ -862,6 +889,16 @@ tasks:
       maxAttempt: 3
       interval: PT15S
     sql: |
+      /*
+      Cette task PostgreSQL crée la table globale des KPI des salariés : poc_kpi_global.
+      Elle combine les informations RH, les distances domicile-travail, les primes sportives et les primes bien-être pour chaque salarié.
+      Colonnes principales :
+      - id_salarie, nom, prenom, salaire_brut : informations de base du salarié
+      - distance_km : distance domicile-travail issue de poc_employees_enriched
+      - eligible_prime, montant_prime : éligibilité et montant de la prime sportive
+      - nb_activites, eligible_bien_etre : nombre d'activités réalisées et éligibilité à la prime bien-être
+      Cette table sert à alimenter le reporting global.
+      */
       
       DROP TABLE IF EXISTS poc_kpi_global;
 
@@ -892,7 +929,7 @@ tasks:
       LEFT JOIN poc_fact_bien_etre be
         ON rh.id_salarie = be.id_salarie;
 
-  - id: create_kpi_global_monitoring
+  - id: create_kpi_global_monitoring    # Tâche pour surveiller la table KPI globale
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
@@ -908,7 +945,7 @@ tasks:
 
       # Vérification qu'il y a des données
       if len(df_kpi) == 0:
-          raise Exception("Aucune donnée dans le KPI global")
+          raise Exception("Aucune donnée dans le KPI global")   # Stop workflow si table vide
 
       # Affichage dans les logs Kestra
       print(f"{len(df_kpi)} salariés dans le KPI global")
@@ -921,15 +958,15 @@ tasks:
       
   # MONITORING
 
-  - id: log_final_summary
+  - id: log_final_summary   # Tâche pour afficher un résumé final dans les logs Kestra
     type: io.kestra.plugin.core.log.Log
     message: |
       Résumé du chargement des fichiers :
-      # - RH rows: {{ outputs.load_raw_tables.vars.rh_rows | default('N/A') }}
-      # - SPORT rows: {{ outputs.load_raw_tables.vars.sport_rows | default('N/A') }}
+      - RH rows: {{ outputs.load_raw_tables.vars.rh_rows | default('N/A') }}
+      - SPORT rows: {{ outputs.load_raw_tables.vars.sport_rows | default('N/A') }}
       - Activités générées: {{ outputs.consume_kafka_sport_activity.vars.nb_activities_kafka | default('N/A') }}
       - Salariés KPI global: {{ outputs.create_kpi_global_monitoring.vars.nb_kpi_rows | default('N/A') }}
-      
+
 errors:
 
   - id: notify_failure_email
@@ -945,7 +982,7 @@ errors:
       Task en erreur : {{ task.id }}<br>
   # Pour un environnement réel, l'envoi d'email nécessite la configuration d'un SMTP (Simple Mail Transfer Protocol) avec host (adresse du serveur), port,  # username et password pour l'authentification. Cette configuration permet l'envoi des email. Pour ce POC, cela n'est pas nécessaire.
 
-  - id: notify_failure_slack
+  - id: notify_failure_slack    # Tâche Python pour notifier Slack
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
@@ -955,7 +992,7 @@ errors:
 
       WEBHOOK_URL = os.getenv("SLACK_WEBHOOK")  # récupère ton webhook depuis l'env
       if not WEBHOOK_URL:
-          raise ValueError("La variable SLACK_WEBHOOK n'est pas définie !")
+          raise ValueError("La variable SLACK_WEBHOOK n'est pas définie !")   # Stop si le webhook est absent
 
       message = "Test de l'envoi de message Slack. Le workflow *{{ flow.id }}* ({{ flow.namespace }}) a échoué !\nExecution : {{ execution.id }}\nTask en erreur : {{ task.id }}"
 

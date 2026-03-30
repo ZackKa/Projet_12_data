@@ -1,55 +1,55 @@
 volumes:
-  postgres-data-projet12:
+  postgres-data-projet12: # Volume persistant pour stocker les données PostgreSQL
+    driver: local # Utilise le driver local Docker pour la persistance
+  kestra-data-projet12: # Volume persistant pour stocker les données Kestra
     driver: local
-  kestra-data-projet12:
-    driver: local
-  redpanda-data:
+  redpanda-data: # Volume persistant pour stocker les données Redpanda
     driver: local
 services:
-  postgres:
-    image: postgres:18
+  postgres: # Service de base de données PostgreSQL
+    image: postgres:18 # Image Docker de PostgreSQL version 18
     volumes:
-      - postgres-data-projet12:/var/lib/postgresql
+      - postgres-data-projet12:/var/lib/postgresql # Montage du volume persistant pour stocker les données PostgreSQL
     ports:
-      # - "5432:5432"
-      - "5433:5432"
+      # - "5432:5432" # Port exposé sur la machine locale
+      - "5433:5432" # Port exposé sur la machine locale (5433 pour éviter les conflits avec d'autres services)
     environment:
-      POSTGRES_DB: kestra
-      POSTGRES_USER: kestra
-      POSTGRES_PASSWORD: k3str4
+      POSTGRES_DB: kestra # Nom de la base de données PostgreSQL
+      POSTGRES_USER: kestra # Nom d'utilisateur PostgreSQL
+      POSTGRES_PASSWORD: k3str4 # Mot de passe PostgreSQL
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"] # Vérifie si la base de données est prête
+      interval: 30s # Intervalle de vérification
+      timeout: 10s # Temps maximum de vérification avant echec
+      retries: 10 # Nombre de tentatives de vérification avant de considérer le service comme down
 
-  kestra:
+  kestra: # Service d'orchestration Kestra
     build:
-      context: .
-      dockerfile: Dockerfile.kestra
-    image: kestra_custom_projet12:latest
-    container_name: kestra_projet12
-    pull_policy: always
+      context: . # Contexte de build (dossier courant)
+      dockerfile: Dockerfile.kestra # Fichier Dockerfile utilisé pour le build
+    image: kestra_custom_projet12:latest # Image Docker de Kestra
+    container_name: kestra_projet12 # Nom du conteneur
+    pull_policy: always # Force Docker à vérifier les mises à jour de l’image
     # Kestra, by default, has a termination grace period of 5m. We need to wait a little more to be sure no active tasks are running.
-    stop_grace_period: 6m
+    stop_grace_period: 6m # Délai avant arrêt forcé pour laisser finir les tâches
     # Note that this setup with a root user is intended for development purpose.
     # Our base image runs without root, but the Docker Compose implementation needs root to access the Docker socket
-    user: "root"
-    command: server standalone
+    user: "root" # Exécute le conteneur en root (nécessaire pour accès Docker socket)
+    command: server standalone # Lance le serveur Kestra en mode standalone
     volumes:
-      - kestra-data-projet12:/app/storage
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /tmp/kestra-wd:/tmp/kestra-wd
-      - C:/Users/zakar_2tvurct/Desktop/Formation_Data_Engineer/Projet_12/Projet_12/sport_data_solution:/data/sport_data_solution
+      - kestra-data-projet12:/app/storage # Montage du volume persistant pour stocker les données Kestra
+      - /var/run/docker.sock:/var/run/docker.sock # Montage du socket Docker pour accès aux conteneurs Docker
+      - /tmp/kestra-wd:/tmp/kestra-wd # Montage du volume persistant pour stocker les données temporaires de Kestra
+      - C:/Users/zakar_2tvurct/Desktop/Formation_Data_Engineer/Projet_12/Projet_12/sport_data_solution:/data/sport_data_solution # Montage du volume persistant pour stocker les données de sport_data_solution
     env_file:
-        - ../.env
+        - ../.env # Fichier .env contenant les variables d'environnement
     environment:
-      KESTRA_CONFIGURATION: |
+      KESTRA_CONFIGURATION: | # Configuration interne de Kestra en YAML inline
         datasources:
           postgres:
-            url: jdbc:postgresql://postgres:5432/kestra
+            url: jdbc:postgresql://postgres:5432/kestra # URL de connexion à la base de données PostgreSQL
             driverClassName: org.postgresql.Driver
-            username: kestra
+            username: kestra 
             password: k3str4
         kestra:
           # server:
@@ -69,20 +69,20 @@ services:
               path: /tmp/kestra-wd/tmp
           url: http://localhost:8080/
     ports:
-      - "8080:8080"
-      - "8081:8081"
+      - "8080:8080" # Port UI Kestra
+      - "8081:8081"  # Port API/Services internes
     depends_on:
       postgres:
-        condition: service_started
+        condition: service_started # Attend que PostgreSQL soit démarré avant de démarrer Kestra
 
   # 🔴 REDPANDA
 
-  redpanda-0:
-    image: docker.redpanda.com/redpandadata/redpanda:v25.3.4
-    container_name: redpanda-0
+  redpanda-0: # Service de broker Kafka Redpanda (équivalent Kafka)
+    image: docker.redpanda.com/redpandadata/redpanda:v25.3.4 # Image Docker de Redpanda version 25.3.4
+    container_name: redpanda-0 # Nom du conteneur
     command:
       - redpanda
-      - start
+      - start # Lance le broker Kafka
       - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
       - --advertise-kafka-addr internal://redpanda-0:9092,external://localhost:19092
       - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
@@ -93,47 +93,47 @@ services:
       - --mode dev-container
       - --smp 1
     volumes:
-      - redpanda-data:/var/lib/redpanda/data
+      - redpanda-data:/var/lib/redpanda/data # Persistance des données du broker
     ports:
-      - "19092:19092"
-      - "18081:18081"
-      - "18082:18082"
-      - "19644:9644"
+      - "19092:19092" # Port Kafka externe
+      - "18081:18081" # Port schema registry
+      - "18082:18082" # Port pandaproxy
+      - "19644:9644" # Port Port admin Redpanda
 
-  redpanda-console:
-    image: docker.redpanda.com/redpandadata/console:v3.5.0
-    container_name: redpanda-console
+  redpanda-console: # Service de console Redpanda. Interface web pour gérer Redpanda
+    image: docker.redpanda.com/redpandadata/console:v3.5.0 # Image Docker de Redpanda console version 3.5.0
+    container_name: redpanda-console # Nom du conteneur
     depends_on:
-      - redpanda-0
+      - redpanda-0 # Attend que le broker Kafka soit démarré avant de démarrer la console
     entrypoint: /bin/sh
-    command: -c 'echo "$$CONSOLE_CONFIG_FILE" > /tmp/config.yml; /app/console'
+    command: -c 'echo "$$CONSOLE_CONFIG_FILE" > /tmp/config.yml; /app/console' # Lance la console Redpanda
     environment:
-      CONFIG_FILEPATH: /tmp/config.yml
+      CONFIG_FILEPATH: /tmp/config.yml # Chemin du fichier de configuration
       CONSOLE_CONFIG_FILE: |
         kafka:
           brokers: ["redpanda-0:9092"]
     ports:
-      - "8082:8080"
+      - "8082:8080" # Port console Redpanda
 
-  redpanda-init:
-    image: docker.redpanda.com/redpandadata/redpanda:v25.3.4
+  redpanda-init: # Service de création du topic Kafka
+    image: docker.redpanda.com/redpandadata/redpanda:v25.3.4 # Image Docker de Redpanda version 25.3.4
     depends_on:
-      - redpanda-0
+      - redpanda-0 # Attend que le broker Kafka soit démarré avant de démarrer le init
     entrypoint: >
       bash -c "
       sleep 15 &&
       rpk topic create sport_activity --brokers redpanda-0:9092 || true
       "
-  producer:
-    build: ../producer
-    container_name: producer
-    depends_on:
-      - redpanda-0
-      - postgres
-    env_file:
-      - ../.env
-    volumes:
-      - ../sport_data_solution:/data/sport_data_solution
-      - ../producer:/app
-    networks:
-      - default
+  # producer: # Service de production des activités sportives
+  #   build: ../producer # Contexte de build (dossier producer)
+  #   container_name: producer # Nom du conteneur
+  #   depends_on:
+  #     - redpanda-0 # Attend que le broker Kafka soit démarré avant de démarrer le producer
+  #     - postgres # Attend que PostgreSQL soit démarré avant de démarrer le producer
+  #   env_file:
+  #     - ../.env # Fichier .env contenant les variables d'environnement
+  #   volumes:
+  #     - ../sport_data_solution:/data/sport_data_solution # Montage du volume persistant pour stocker les données de sport_data_solution
+  #     - ../producer:/app # Montage du volume persistant pour stocker le code du producer
+  #   networks:
+  #     - default # Réseau par défaut
