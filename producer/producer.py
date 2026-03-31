@@ -5,6 +5,7 @@ from datetime import datetime, timedelta # Gestion des dates et calculs temporel
 
 import pandas as pd # Manipulation de données tabulaires (DataFrame)
 from kafka import KafkaProducer # Client Kafka pour produire des messages
+from kafka.errors import NoBrokersAvailable # Erreur si aucun broker Kafka n'est disponible
 from faker import Faker # Générateur de données fictives
 from dotenv import load_dotenv # Permet de charger les variables d’environnement
 
@@ -42,10 +43,30 @@ weather = [
 # ----------------------------
 # KAFKA
 # ----------------------------
-producer = KafkaProducer( # Initialise le producteur Kafka
-    bootstrap_servers=KAFKA_BROKER, # Adresse du broker Kafka
-    value_serializer=lambda v: json.dumps(v, default=str).encode("utf-8") # Convertit les données en JSON encodé en UTF-8
-)
+# producer = KafkaProducer( # Initialise le producteur Kafka
+#     bootstrap_servers=KAFKA_BROKER, # Adresse du broker Kafka
+#     value_serializer=lambda v: json.dumps(v, default=str).encode("utf-8") # Convertit les données en JSON encodé en UTF-8
+# )
+    # Code pour se connecter à Kafka avec des tentatives en cas d'erreur
+producer = None
+
+for i in range(10):
+    try:
+        print(f"Tentative connexion Kafka ({i+1}/10)...")
+        producer = KafkaProducer(
+            bootstrap_servers=KAFKA_BROKER,
+            value_serializer=lambda v: json.dumps(v, default=str).encode("utf-8"),
+            retries=5,
+            acks='all'
+        )
+        print("Connecté à Kafka !")
+        break
+    except NoBrokersAvailable:
+        print("Kafka pas prêt, on attend 5 secondes...")
+        time.sleep(5)
+
+if producer is None:
+    raise Exception("Impossible de se connecter à Kafka après plusieurs tentatives")
 
 # ----------------------------
 # LOAD DATA
