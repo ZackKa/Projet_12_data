@@ -967,6 +967,19 @@ tasks:
       - Activités générées: {{ outputs.consume_kafka_sport_activity.vars.nb_activities_kafka | default('N/A') }}
       - Salariés KPI global: {{ outputs.create_kpi_global_monitoring.vars.nb_kpi_rows | default('N/A') }}
 
+triggers:
+  - id: weekly_trigger
+    type: io.kestra.core.models.triggers.types.Schedule   # Type de trigger : planification basée sur un calendrier (Schedule)
+    cron: "0 9 * * 1"
+      # Expression CRON qui définit quand le pipeline doit s’exécuter automatiquement
+      # Décodage :
+      #   - 0 minute
+      #   - 9 heure (9h00 du matin)
+      #   - * jour du mois (non def)
+      #   - * mois (tous les mois)
+      #   - * jour de la semaine (tous les lundis)
+      # Donc : le pipeline se déclenche tous les lundis à 9h00
+
 errors:
 
   - id: notify_failure_email
