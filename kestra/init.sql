@@ -1,0 +1,3 @@
+CREATE DATABASE poc_raw;
+CREATE DATABASE poc_staging;
+CREATE DATABASE poc_mart;

@@ -10,6 +10,7 @@ services:
     image: postgres:18 # Image Docker de PostgreSQL version 18
     volumes:
       - postgres-data-projet12:/var/lib/postgresql # Montage du volume persistant pour stocker les données PostgreSQL
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql # Montage du fichier init.sql pour créer les bases de données, Raw, Staging et Mart
     ports:
       # - "5432:5432" # Port exposé sur la machine locale
       - "5433:5432" # Port exposé sur la machine locale (5433 pour éviter les conflits avec d'autres services)
@@ -27,7 +28,7 @@ services:
     build:
       context: . # Contexte de build (dossier courant)
       dockerfile: Dockerfile.kestra # Fichier Dockerfile utilisé pour le build
-    image: kestra_custom_projet12:latest # Image Docker de Kestra
+    # image: kestra_custom_projet12:latest # Image Docker de Kestra
     container_name: kestra_projet12 # Nom du conteneur
     pull_policy: always # Force Docker à vérifier les mises à jour de l’image
     # Kestra, by default, has a termination grace period of 5m. We need to wait a little more to be sure no active tasks are running.

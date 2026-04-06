@@ -50,7 +50,7 @@ Ce Proof of Concept vise à :
 | Catégorie           | Outils / Librairies |
 |--------------------|------------------|
 | **Orchestration**    | Kestra (orchestration des tâches ETL et automation Slack) |
-| **Base de données**  | PostgreSQL (stockage des données RAW, STAGING, MART) |
+| **Base de données**  | PostgreSQL (3 bases : RAW pour les données brutes, STAGING pour les données enrichies et transformées, MART pour les tables métiers) |
 | **Streaming**        | Redpanda (Kafka API compatible) |
 | **Message broker**   | Kafka (via Redpanda) |
 | **Langage**          | Python (ingestion, transformation, simulation Strava, calcul des distances) |
@@ -74,7 +74,7 @@ Ce Proof of Concept vise à :
           │                               │
           └───────────────┬───────────────┘
                           │
-                 [PostgreSQL - RAW]
+                 [PostgreSQL - Base RAW, Base Staging, Base Mart]
                           │
              [Transformation Python / SQL]
                           │
@@ -155,7 +155,7 @@ Vous devez créer un .env à la racine du projet avec :
 
 ## 8. Organisation des données
 
-### RAW (données brutes)
+### Base de données RAW (données brutes)
 
 - rh_raw : fichiers RH initiaux (identité, salaire, adresse, moyen de déplacement).
 
@@ -165,15 +165,15 @@ Vous devez créer un .env à la racine du projet avec :
 
 - config_parameters : règles paramétrables (taux prime, nombre minimum d’activités, distances max selon mode de déplacement).
 
-- poc_sport_activity_messages : Pour avoir un historique des messages d'encouragement envoyés sur Slack
-
-### STAGING (données enrichies / transformées)
+### Base de données STAGING (données enrichies / transformées)
 
 - employees_enriched : ajout des distances domicile-travail, validité des déclarations, âge, ancienneté.
 
 - sports_activity_clean : nettoyage et validation des activités sportives simulées.
 
-### MART (tables métier)
+- poc_sport_activity_messages : Pour avoir un historique des messages d'encouragement envoyés sur Slack
+
+### Base de données MART (tables métier)
 
 - fact_prime_sportive : calcul des primes 5%.
 
@@ -201,9 +201,10 @@ Le workflow Kestra est organisé pour automatiser l’ensemble du POC, de l’in
 | **consume_kafka_sport_activity**     | Consommation des données Kafka |
 | **create_table_message_slack**       | Création de la table poc_sport_activity_messages pour l'historique des messages slack.     |
 | **send_encouragement_messages**      | Task qui envoie des messages slack pour chaque activité     |
-| **create_sport_activity_clean_table**| Nettoyage des données activité sportive                      |
+| **create_sport_activity_clean_table_sql**| Création de la table nettoyée des données activités sportives                      |
+| **populate_sport_activity_clean_table**  | Nottoyage et insertion des données activités sportives                               |
 | **test_poc_sport_activity_clean**    | Tests qualité activités                                |
-| **create_fact_prime_sportive**       | Calcul des primes                                   |
+| **create_fact_prime_sportive**       | Calcul des primes.                                    |
 | **create_fact_bien_etre**            | Calcul de la condition "bien-être"                                  |
 | **create_kpi_global**                | Table finale KPI                                  |
 | **create_kpi_global_monitoring**     | Sert pour afficher logs   |
@@ -357,7 +358,7 @@ docker-compose up -d
 
 **A savoir** cette commande lance tout le projet, donc en cas de réexécution du projet, pensez à commenter le produceur dans docker-compose.yaml du dossier Kestra, pour ne pas avoir de nouvelles données sportives créées qui seront ajoutées aux anciennes.
 
-2. Vérifier que les conteneurs postgres et kestra sont en ligne.
+2. Vérifier que les conteneurs postgres (3 bases : RAW, STAGING, MART) et Kestra sont en ligne.
 
 3. Accéder à l’interface Kestra sur http://localhost:8080.
 
@@ -375,7 +376,22 @@ Les activités sportives simulées sont générées aléatoirement mais avec des
 
 Les commentaires sont générés automatiquement pour chaque activité.
 
-## 18. Conclusion
+Toutes les tâches utilisent des connexions spécifiques selon la couche :
+- RAW : lecture des données brutes (RH, activités, paramètres)
+- STAGING : lecture/écriture des données transformées et nettoyées
+- MART : écriture des tables métier et lecture des fact tables pour les KPI globaux
+Les scripts Python utilisent SQLAlchemy avec les URLs correspondantes à chaque base.
+
+## 18. Planification du workflow
+
+Le pipeline est automatisé pour s’exécuter tous les jours à 9h via le mécanisme de cron défini dans Kestra.
+Cela permet :
+
+- de récupérer quotidiennement les nouvelles activités sportives,
+- de recalculer les primes et KPI,
+- et de mettre à jour les dashboards PowerBI de manière régulière.
+
+## 19. Conclusion
 
 Ce POC démontre la faisabilité d’un système complet :
 
