@@ -94,8 +94,6 @@ tasks:
           PRIMARY KEY (param_name, version_id)
       );
   
-  # DROP TABLE IF EXISTS poc_config_parameters; pour rejouer et tester en partant de 0
-  
   - id: fill_config_parameters
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
