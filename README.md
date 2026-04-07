@@ -216,7 +216,8 @@ Le workflow Kestra est organisé pour automatiser l’ensemble du POC, de l’in
 | **start**                            | Début du workflow et journalisation.                                        |
 | **ingestion_all**                    | Création du dossier de travail et copie des fichiers RH et sportives.       |
 | **check_data**                       | Vérification des fichiers importés : lecture, structure, doublons, valeurs manquantes. |
-| **create_config_parameters**         | Paramétrage métier                                     |
+| **create_config_parameters**         | Création de la table de paramètres versionnés                                     |
+| **fill_config_parameters**           | Gestion intelligente des paramètres (idempotence + historisation SCD2)                |
 | **create_raw_tables**                | Création des tables RAW : poc_rh_raw et poc_sportive_raw.                   |
 | **load_raw_tables**                  | Lecture des fichiers Excel et insertion dans les tables RAW PostgreSQL.     |
 | **test_poc_rh_raw**                  | Tests qualité RH                                   |
@@ -339,6 +340,88 @@ Exemples :
         - max_bike_km = 25
 
 Permet d’adapter le pipeline sans modifier le code
+
+### Historisation des paramètres (SCD Type 2)
+
+Les paramètres sont **versionnés et historisés**.
+
+Chaque modification crée une nouvelle version :
+
+- `version_id` incrémenté
+- `valid_from = NOW()`
+- `valid_to = NULL`
+- `is_active = TRUE`
+
+L’ancienne version est automatiquement :
+
+- désactivée (`is_active = FALSE`)
+- clôturée (`valid_to = NOW()`)
+
+### Comportement de la task `fill_config_parameters`
+
+La task est **idempotente** et gère 3 cas :
+
+- ✅ **Première exécution**  
+  → insertion des paramètres
+
+- ✅ **Re-run avec mêmes valeurs**  
+  → aucun changement (pas de duplication)
+
+- ✅ **Modification d’un paramètre**  
+  → historisation automatique + nouvelle version
+
+### Avantages
+
+- Rejouabilité du pipeline sans effet de bord
+- Traçabilité complète des changements métier
+- Possibilité de recalcul avec anciens paramètres (audit / simulation)
+
+## 13bis. Rejouabilité et gestion des recalculs
+
+Le pipeline a été conçu pour être **rejouable plusieurs fois sans suppression des données critiques**.
+
+### 🔁 Rejouabilité
+
+- Les paramètres (`poc_config_parameters`) ne sont **jamais supprimés**
+- Les tasks sont **idempotentes**
+- Le pipeline peut être relancé sans créer d’incohérences
+
+### ⚠️ Tables réinitialisées volontairement (POC)
+
+Certaines tables sont recréées pour simplifier les démonstrations :
+
+- `poc_fact_prime_sportive`
+- `poc_fact_bien_etre`
+- `poc_kpi_global`
+
+Cela permet de repartir de zéro lors d’une soutenance.
+
+### 🧹 Task optionnelle : rebuild_history
+
+Une task optionnelle permet de vider les tables MART :
+
+- utilisée pour relancer les calculs
+- ne modifie pas les paramètres
+- ne supprime pas l’historique
+
+### 📊 Recalcul avec anciens paramètres
+
+Le pipeline permet d’utiliser une version passée des paramètres :
+
+Exemple :
+
+```sql
+SELECT param_name, value
+FROM poc_config_parameters
+WHERE valid_from <= '2025-01-01'
+AND (valid_to > '2025-01-01' OR valid_to IS NULL)
+```
+
+Cela permet :
+
+- audit métier
+- simulation d’impact
+- analyse historique
 
 ## 14. Simulation des données (`producer.py`)
 

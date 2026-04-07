@@ -85,17 +85,81 @@ tasks:
     sql: |
 
       CREATE TABLE IF NOT EXISTS poc_config_parameters (
-        param_name TEXT PRIMARY KEY,
-        value FLOAT
+          param_name TEXT,
+          value FLOAT,
+          version_id INTEGER,
+          valid_from TIMESTAMP,
+          valid_to TIMESTAMP,
+          is_active BOOLEAN,
+          PRIMARY KEY (param_name, version_id)
       );
+  
+  # DROP TABLE IF EXISTS poc_config_parameters; pour rejouer et tester en partant de 0
+  
+  - id: fill_config_parameters
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    script: |
+      from sqlalchemy import create_engine, text
+      from datetime import datetime
 
-      DELETE FROM poc_config_parameters;
+      engine = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_raw")
 
-      INSERT INTO poc_config_parameters (param_name, value) VALUES
-      ('prime_rate', 0.05),
-      ('min_activities', 15),
-      ('max_walk_km', 15),
-      ('max_bike_km', 25);
+      new_params = [
+          {"param_name": "prime_rate", "value": 0.05},
+          {"param_name": "min_activities", "value": 15},
+          {"param_name": "max_walk_km", "value": 15},
+          {"param_name": "max_bike_km", "value": 25},
+      ]
+
+      with engine.begin() as conn:
+          for param in new_params:
+
+              # 🔥 1. récupérer la version ACTIVE actuelle
+              existing = conn.execute(text("""
+                  SELECT value, version_id
+                  FROM poc_config_parameters
+                  WHERE param_name = :param_name
+                    AND is_active = TRUE
+              """), param).mappings().fetchone()
+
+              if existing:
+                  # CAS 1 → même valeur → on ne fait rien
+                  if float(existing['value']) == float(param['value']):
+                      print(f"{param['param_name']} inchangé → skip")
+                      continue
+
+                  # CAS 2 → valeur différente → on historise
+                  print(f"{param['param_name']} modifié → historisation")
+
+                  # désactiver ancienne version
+                  conn.execute(text("""
+                      UPDATE poc_config_parameters
+                      SET is_active = FALSE,
+                          valid_to = NOW()
+                      WHERE param_name = :param_name
+                        AND is_active = TRUE
+                  """), param)
+
+                  # calcul nouvelle version
+                  new_version = existing['version_id'] + 1
+
+              else:
+                  # CAS 3 → première insertion
+                  print(f"{param['param_name']} première insertion")
+                  new_version = 1
+
+              # 🔥 insertion nouvelle version
+              conn.execute(text("""
+                  INSERT INTO poc_config_parameters
+                  (param_name, value, version_id, valid_from, valid_to, is_active)
+                  VALUES (:param_name, :value, :version_id, NOW(), NULL, TRUE)
+              """), {
+                  "param_name": param["param_name"],
+                  "value": param["value"],
+                  "version_id": new_version
+              })
 
   - id: create_raw_tables     # Tâche pour créer les tables brutes RH et sportives
     type: io.kestra.plugin.jdbc.postgresql.Queries    # Exécution de requêtes SQL PostgreSQL
@@ -355,7 +419,14 @@ tasks:
       df = pd.read_sql("SELECT * FROM poc_rh_raw", engine_raw)    # Lecture de la table RH brute depuis PostgreSQL
 
       print("Lecture des paramètres (RAW)...")
-      params = pd.read_sql("SELECT * FROM poc_config_parameters", engine_raw)   # Lecture des paramètres de configuration
+      # params = pd.read_sql("SELECT * FROM poc_config_parameters", engine_raw)   # Lecture des paramètres de configuration
+      params = pd.read_sql("""
+          SELECT param_name, value
+          FROM poc_config_parameters
+          WHERE is_active = TRUE
+      """, engine_raw)
+      # Pour choisir une date precise de calcul, vous pouvez faire remplacer les condition sql par
+      # WHERE valid_from <= :date AND (valid_to > :date OR valid_to IS NULL), où date est une date à définir au format YYYY-MM-DD.
 
       param_dict = dict(zip(params["param_name"], params["value"]))   # Conversion des paramètres en dictionnaire
 
@@ -516,7 +587,6 @@ tasks:
           duree_min INTEGER,
           commentaire TEXT
       );
-
 
   - id: consume_kafka_sport_activity    # Tâche pour consommer les données redpanda
     type: io.kestra.plugin.scripts.python.Script
@@ -738,6 +808,7 @@ tasks:
       df_clean.to_sql("poc_sport_activity_clean", engine_staging, if_exists="append", index=False)
       print(f"{len(df_clean)} lignes insérées dans poc_sport_activity_clean")
 
+
   - id: test_poc_sport_activity_clean
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
@@ -816,6 +887,28 @@ tasks:
       if result.returncode != 0:
           raise Exception("Le test pytest a échoué")
 
+  - id: create_fact_prime_sportive_table    # Tâche pour créer la table des primes sportives des salariés
+    type: io.kestra.plugin.jdbc.postgresql.Queries
+    url: jdbc:postgresql://postgres:5432/poc_mart
+    username: "{{ envs.postgres_user }}"
+    password: "{{ envs.postgres_password }}"
+    retry:
+      type: constant
+      maxAttempt: 3
+      interval: PT15S
+    sql: |
+
+      DROP TABLE IF EXISTS poc_fact_prime_sportive;
+      
+      CREATE TABLE IF NOT EXISTS poc_fact_prime_sportive (
+          id_salarie INTEGER,
+          salaire_brut NUMERIC,
+          eligible_prime BOOLEAN,
+          montant_prime NUMERIC,
+          run_id TEXT,
+          date_calcul TIMESTAMP
+      );
+
   - id: create_fact_prime_sportive
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
@@ -827,12 +920,16 @@ tasks:
     script: |
       import pandas as pd
       from sqlalchemy import create_engine, text
+      from datetime import datetime
 
       # Cette task PostgreSQL crée la table des primes sportives poc_fact_prime_sportive.
       # Elle combine les données RH (poc_rh_raw) et les distances calculées (poc_employees_enriched) pour déterminer :
       # - eligibility : le salarié a-t-il rempli correctement sa déclaration ?
       # - montant de la prime : calculé en multipliant le salaire par le taux de prime défini dans poc_config_parameters.
       # Permet d’obtenir une table prête à être utilisée pour la paie ou le reporting.
+
+      # Run ID pour historisation
+      run_id = datetime.now().strftime("%Y%m%d%H%M%S")
 
       # Connexions aux différentes bases
       engine_raw = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_raw")       # RH + config
@@ -846,7 +943,14 @@ tasks:
       emp = pd.read_sql("SELECT * FROM poc_employees_enriched", engine_staging)
 
       # Lecture des paramètres
-      params = pd.read_sql("SELECT param_name, value FROM poc_config_parameters", engine_raw)
+      params = pd.read_sql("""
+        SELECT param_name, value
+        FROM poc_config_parameters
+        WHERE is_active = TRUE
+      """, engine_raw)
+      # Pour choisir une date precise de calcul, vous pouvez faire remplacer les condition sql par
+      # WHERE valid_from <= :date AND (valid_to > :date OR valid_to IS NULL), où date est une date à définir au format YYYY-MM-DD.
+
       param_dict = dict(zip(params["param_name"], params["value"]))
       prime_rate = float(param_dict.get("prime_rate", 0))
 
@@ -858,14 +962,35 @@ tasks:
       df['montant_prime'] = df.apply(lambda row: row['salaire_brut']*prime_rate if row['eligible_prime'] else 0, axis=1)
 
       # Sélection des colonnes finales
-      df_fact = df[['id_salarie','salaire_brut','eligible_prime','montant_prime']]
+      df_fact = df[['id_salarie','salaire_brut','eligible_prime','montant_prime']].copy()
+      df_fact['run_id'] = run_id
+      df_fact['date_calcul'] = pd.Timestamp.now()
 
       # Création de la table dans MART
-      with engine_mart.begin() as conn:
-          conn.execute(text("DROP TABLE IF EXISTS poc_fact_prime_sportive"))
-      df_fact.to_sql("poc_fact_prime_sportive", engine_mart, if_exists='replace', index=False)
+      df_fact.to_sql("poc_fact_prime_sportive", engine_mart, if_exists='append', index=False)
 
       print(f"{len(df_fact)} lignes insérées dans poc_fact_prime_sportive")
+
+  - id: create_fact_bien_etre_table    # Tâche pour créer la table des primes sportives des salariés
+    type: io.kestra.plugin.jdbc.postgresql.Queries
+    url: jdbc:postgresql://postgres:5432/poc_mart
+    username: "{{ envs.postgres_user }}"
+    password: "{{ envs.postgres_password }}"
+    retry:
+      type: constant
+      maxAttempt: 3
+      interval: PT15S
+    sql: |
+
+      DROP TABLE IF EXISTS poc_fact_bien_etre;
+      
+      CREATE TABLE IF NOT EXISTS poc_fact_bien_etre (
+          id_salarie INTEGER,
+          nb_activites INTEGER,
+          eligible_bien_etre BOOLEAN,
+          run_id TEXT,
+          date_calcul TIMESTAMP
+      );
 
   - id: create_fact_bien_etre
     type: io.kestra.plugin.scripts.python.Script
@@ -878,12 +1003,16 @@ tasks:
     script: |
       import pandas as pd
       from sqlalchemy import create_engine, text
+      from datetime import datetime
 
       # Cette task PostgreSQL crée la table des primes bien-être poc_fact_bien_etre.
       # Elle combine les données RH (poc_rh_raw) et les activités sportives nettoyées (poc_sport_activity_clean) pour déterminer :
       # - nb_activites : nombre d'activités sportives réalisées par le salarié
       # - eligible_bien_etre : le salarié a-t-il atteint le nombre minimum d'activités défini dans poc_config_parameters
       # Permet d’obtenir une table prête à être utilisée pour le reporting bien-être ou pour le calcul de primes associées.
+
+      # Run ID pour historisation
+      run_id = datetime.now().strftime("%Y%m%d%H%M%S")
 
       # Connexions aux différentes bases
       engine_raw = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_raw")        # RH + paramètres
@@ -897,7 +1026,14 @@ tasks:
       activities = pd.read_sql("SELECT * FROM poc_sport_activity_clean", engine_staging)
 
       # Lecture des paramètres
-      params = pd.read_sql("SELECT param_name, value FROM poc_config_parameters", engine_raw)
+      params = pd.read_sql("""
+        SELECT param_name, value
+        FROM poc_config_parameters
+        WHERE is_active = TRUE
+      """, engine_raw)
+      # Pour choisir une date precise de calcul, vous pouvez faire remplacer les condition sql par
+      # WHERE valid_from <= :date AND (valid_to > :date OR valid_to IS NULL), où date est une date à définir au format YYYY-MM-DD.
+      
       param_dict = dict(zip(params["param_name"], params["value"]))
       min_activities = int(param_dict.get("min_activities", 0))
 
@@ -912,14 +1048,39 @@ tasks:
       df["eligible_bien_etre"] = df["nb_activites"] >= min_activities
 
       # Sélection des colonnes finales
-      df_fact = df[["id_salarie", "nb_activites", "eligible_bien_etre"]]
+      df_fact = df[["id_salarie", "nb_activites", "eligible_bien_etre"]].copy()
+      df_fact["run_id"] = run_id
+      df_fact["date_calcul"] = pd.Timestamp.now()
 
       # Création de la table dans MART
-      with engine_mart.begin() as conn:
-          conn.execute(text("DROP TABLE IF EXISTS poc_fact_bien_etre"))
-      df_fact.to_sql("poc_fact_bien_etre", engine_mart, if_exists="replace", index=False)
+      df_fact.to_sql("poc_fact_bien_etre", engine_mart, if_exists='append', index=False)
 
       print(f"{len(df_fact)} lignes insérées dans poc_fact_bien_etre")
+
+  - id: create_kpi_global_table    # Tâche pour créer la table des primes sportives des salariés
+    type: io.kestra.plugin.jdbc.postgresql.Queries
+    url: jdbc:postgresql://postgres:5432/poc_mart
+    username: "{{ envs.postgres_user }}"
+    password: "{{ envs.postgres_password }}"
+    retry:
+      type: constant
+      maxAttempt: 3
+      interval: PT15S
+    sql: |
+
+      DROP TABLE IF EXISTS poc_kpi_global;
+      
+      CREATE TABLE poc_kpi_global (
+          id_salarie INTEGER,
+          nom TEXT,
+          prenom TEXT,
+          salaire_brut NUMERIC,
+          distance_km NUMERIC,
+          eligible_prime BOOLEAN,
+          montant_prime NUMERIC,
+          nb_activites INTEGER,
+          eligible_bien_etre BOOLEAN
+      );
 
   - id: create_kpi_global
     type: io.kestra.plugin.scripts.python.Script
@@ -989,6 +1150,23 @@ tasks:
       - Activités générées: {{ outputs.consume_kafka_sport_activity.vars.nb_activities_kafka | default('N/A') }}
       - Salariés KPI global: {{ outputs.create_kpi_global.vars.nb_kpi_rows | default('N/A') }}
 
+  # - id: rebuild_history   # Cette task vide juste les tables MART (prime et bien-etre) pour pouvoir relancer tous les calculs depuis zéro
+  #   type: io.kestra.plugin.scripts.python.Script
+  #   description: Recalcul complet des tables MART avec les paramètres actifs
+  #   taskRunner:
+  #     type: io.kestra.plugin.core.runner.Process
+  #   script: |
+  #     from sqlalchemy import create_engine, text
+
+  #     engine = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_mart")
+
+  #     with engine.begin() as conn:
+  #         conn.execute(text("DELETE FROM poc_fact_prime_sportive"))
+  #         conn.execute(text("DELETE FROM poc_fact_bien_etre"))
+
+  #     print("Tables MART vidées - relancer les tasks de calcul")
+  # Actuellement les tasks create_fact_bien_etre_table et create_fact_prime_sportive_table ont des drops, pour montrer que l'on peut exécuter le flow à partir de zéro sans soucis
+
 triggers:
   - id: daily_trigger
     type: io.kestra.core.models.triggers.types.Schedule   # Type de trigger : planification basée sur un calendrier (Schedule)
@@ -1003,6 +1181,7 @@ triggers:
       #   - * jour de la semaine (tous les jours)
       # Donc : le pipeline se déclenche tous les jours à 9h00
 
+
 errors:
 
   - id: notify_failure_email
@@ -1016,7 +1195,7 @@ errors:
       Execution : {{ execution.id }}<br>
       Statut : {{ execution.state }}
       Task en erreur : {{ task.id }}<br>
-  # Pour un environnement réel, l'envoi d'email nécessite la configuration d'un SMTP (Simple Mail Transfer Protocol) avec host (adresse du serveur), port,  # username et password pour l'authentification. Cette configuration permet l'envoi des email. Pour ce POC, cela n'est pas nécessaire.
+  # # Pour un environnement réel, l'envoi d'email nécessite la configuration d'un SMTP (Simple Mail Transfer Protocol) avec host (adresse du serveur), port,  # username et password pour l'authentification. Cette configuration permet l'envoi des email. Pour ce POC, cela n'est pas nécessaire.
 
   - id: notify_failure_slack    # Tâche Python pour notifier Slack
     type: io.kestra.plugin.scripts.python.Script
@@ -1030,7 +1209,7 @@ errors:
       if not WEBHOOK_URL:
           raise ValueError("La variable SLACK_WEBHOOK n'est pas définie !")   # Stop si le webhook est absent
 
-      message = "Test de l'envoi de message Slack. Le workflow *{{ flow.id }}* ({{ flow.namespace }}) a échoué !\nExecution : {{ execution.id }}\nTask en erreur : {{ task.id }}"
+      message = "Erreur dans le flow. Le workflow *{{ flow.id }}* ({{ flow.namespace }}) a échoué !\nExecution : {{ execution.id }}\nTask en erreur : {{ task.id }}"
 
       try:
           requests.post(WEBHOOK_URL, json={"text": message})
