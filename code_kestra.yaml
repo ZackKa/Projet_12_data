@@ -68,12 +68,16 @@ tasks:
           # Doublons
           print("\n--- DOUBLONS ---")
           print(df.duplicated().sum())
+ 
+  - id: debug_env   # vérifie la lecture des éléments du .env
+    type: io.kestra.plugin.core.log.Log
+    message: "USER = {{ envs.postgres_user }}, PASSWORD = {{ envs.postgres_password }}, NAME_DB = {{ envs.postgres_db }}"
 
   - id: create_config_parameters   # Tâche pour créer et initialiser les paramètres de configuration métier
     type: io.kestra.plugin.jdbc.postgresql.Queries    # Plugin Kestra pour exécuter des requêtes SQL sur PostgreSQL
-    url: jdbc:postgresql://postgres:5432/kestra     # URL de connexion à la base PostgreSQL
-    username: kestra
-    password: k3str4
+    url: jdbc:postgresql://postgres:5432/poc_raw    # URL de connexion à la base PostgreSQL des données RAW
+    username: "{{ envs.postgres_user }}"
+    password: "{{ envs.postgres_password }}"
     retry:
         type: constant
         maxAttempt: 3
@@ -95,9 +99,9 @@ tasks:
 
   - id: create_raw_tables     # Tâche pour créer les tables brutes RH et sportives
     type: io.kestra.plugin.jdbc.postgresql.Queries    # Exécution de requêtes SQL PostgreSQL
-    url: jdbc:postgresql://postgres:5432/kestra
-    username: kestra
-    password: k3str4
+    url: jdbc:postgresql://postgres:5432/poc_raw    # URL de connexion à la base PostgreSQL des données RAW
+    username: "{{ envs.postgres_user }}"
+    password: "{{ envs.postgres_password }}"
     retry:
         type: constant
         maxAttempt: 3
@@ -136,11 +140,19 @@ tasks:
       sportive.xlsx: "{{ outputs.ingestion_all.outputFiles['data/sportive.xlsx'] }}"    # Injection du fichier sport
     script: |
       import pandas as pd # Bibliothèque pour manipuler les données
+      import os
       from sqlalchemy import create_engine # Pour se connecter à PostgreSQL via SQLAlchemy
       #SQLAlchemy sert à interagir avec des bases de données en Python de manière plus simple et orientée objets, sans écrire directement du SQL.
 
+      user = os.getenv("POSTGRES_USER")
+      pwd = os.getenv("POSTGRES_PASSWORD")
+
       # connexion postgres
-      engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra") # Crée le moteur SQLAlchemy pour PostgreSQL
+      engine = create_engine(f"postgresql+psycopg2://{user}:{pwd}@postgres:5432/poc_raw") # Crée le moteur SQLAlchemy pour PostgreSQL
+      # engine = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_raw")
+      # On peut soit utiliser os pour récupérer l'utilisateur et le mot de passe depuis un fichier .env,
+      # Ou utiliser directement 'envs', qui dans Kestra est un dictionnaire contenant toutes les variables d'environnement définies pour le workflow. 
+      # Par exemple, envs.postgres_user et envs.postgres_password correspondent aux valeurs configurées dans Kestra.
 
       # lecture fichiers
       df_rh = pd.read_excel("rh.xlsx")  # Lit le fichier RH Excel
@@ -199,7 +211,7 @@ tasks:
         from sqlalchemy import create_engine
 
         def test_poc_rh_raw():
-            engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")    # Connexion à la DB
+            engine = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_raw") # Connexion à la DB
             df = pd.read_sql("SELECT * FROM poc_rh_raw", engine)    # Lecture de la table RH brute
 
             errors = []   # Liste pour stocker les erreurs de tests
@@ -266,7 +278,7 @@ tasks:
         from sqlalchemy import create_engine
 
         def test_poc_sportive_raw():
-            engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
+            engine = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_raw") # Connexion à la DB
             df = pd.read_sql("SELECT * FROM poc_sportive_raw", engine)
 
             errors = []
@@ -297,9 +309,9 @@ tasks:
 
   - id: create_rh_enriched_table    # Tâche pour créer la tables pour calculer les distances domicile-travail
     type: io.kestra.plugin.jdbc.postgresql.Query
-    url: jdbc:postgresql://postgres:5432/kestra
-    username: kestra
-    password: k3str4
+    url: jdbc:postgresql://postgres:5432/poc_staging
+    username: "{{ envs.postgres_user }}"
+    password: "{{ envs.postgres_password }}"
     retry:
         type: constant
         maxAttempt: 3
@@ -336,13 +348,14 @@ tasks:
       entreprise = "1362 Av. des Platanes, 34970 Lattes"    # Adresse de l'entreprise pour le calcul des distances
 
       print("Connexion à PostgreSQL...")
-      engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
+      engine_raw = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_raw")
+      engine_staging = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_staging")
 
       print("Lecture des données RH...")
-      df = pd.read_sql("SELECT * FROM poc_rh_raw", engine)    # Lecture de la table RH brute depuis PostgreSQL
+      df = pd.read_sql("SELECT * FROM poc_rh_raw", engine_raw)    # Lecture de la table RH brute depuis PostgreSQL
 
-      print("Lecture des paramètres...")
-      params = pd.read_sql("SELECT * FROM poc_config_parameters", engine)   # Lecture des paramètres de configuration
+      print("Lecture des paramètres (RAW)...")
+      params = pd.read_sql("SELECT * FROM poc_config_parameters", engine_raw)   # Lecture des paramètres de configuration
 
       param_dict = dict(zip(params["param_name"], params["value"]))   # Conversion des paramètres en dictionnaire
 
@@ -471,13 +484,12 @@ tasks:
 
       df_out.to_sql(
           "poc_employees_enriched",
-          engine,
+          engine_staging,
           if_exists="replace",
           index=False
       )
 
-      print("Toutes les distances calculées et table mise à jour")
-      print(f"{len(df_out)} distances calculées")
+      print(f"{len(df_out)} distances calculées et insérées dans poc_staging")
 
       from kestra import Kestra
       Kestra.outputs({
@@ -486,9 +498,9 @@ tasks:
 
   - id: create_sport_activity_table   # Tâche pour créer la tables pour consommer les données redpanda
     type: io.kestra.plugin.jdbc.postgresql.Queries
-    url: jdbc:postgresql://postgres:5432/kestra
-    username: kestra
-    password: k3str4
+    url: jdbc:postgresql://postgres:5432/poc_raw
+    username: "{{ envs.postgres_user }}"
+    password: "{{ envs.postgres_password }}"
     retry:
       type: constant
       maxAttempt: 3
@@ -526,7 +538,7 @@ tasks:
       TOPIC = "sport_activity"           # Nom du topic Kafka à consommer
 
       # Connexion PostgreSQL
-      engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
+      engine = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_raw")
       print("Début de la récupération des activités depuis Kafka")
 
       # Création du consumer Kafka
@@ -564,9 +576,9 @@ tasks:
 
   - id: create_table_message_slack    # Tâche pour créer la tables pour l'historique des messages slack
     type: io.kestra.plugin.jdbc.postgresql.Queries
-    url: jdbc:postgresql://postgres:5432/kestra
-    username: kestra
-    password: k3str4
+    url: jdbc:postgresql://postgres:5432/poc_staging
+    username: "{{ envs.postgres_user }}"
+    password: "{{ envs.postgres_password }}"
     retry:
       type: constant
       maxAttempt: 3
@@ -603,7 +615,9 @@ tasks:
       if not WEBHOOK_URL:
           raise ValueError("La variable SLACK_WEBHOOK n'est pas définie !")  # Stop si webhook absent
 
-      engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")  # Connexion PostgreSQL
+      # Connexion aux bases
+      engine_raw = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_raw")        # Lecture des activités depuis RAW  # MODIF
+      engine_staging = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_staging")  # Insertion messages dans STAGING
 
       # Templates de messages Slack
       slack_templates = [
@@ -614,15 +628,13 @@ tasks:
           "💪 {prenom} {nom}, bravo pour ta séance de {sport} le {date} ! Gardons cette énergie !"
       ]
 
-      # Lire toutes les activités
-      # activities = pd.read_sql("SELECT * FROM poc_sport_activity", engine)
-      # JOIN pour récupérer prénom / nom
+      # Lecture des activités depuis RAW + JOIN pour récupérer prénom / nom depuis poc_rh_raw
       activities = pd.read_sql("""
           SELECT a.*, r.prenom, r.nom
           FROM poc_sport_activity a
           LEFT JOIN poc_rh_raw r
               ON a.id_salarie = r.id_salarie
-      """, engine)
+      """, engine_raw)
 
       max_attempts = 3       # Nombre de tentatives pour l'envoi Slack
       retry_interval = 5     # Délai en secondes entre chaque tentative
@@ -633,7 +645,7 @@ tasks:
           # Vérifier si un message a déjà été envoyé
           msg_exist = pd.read_sql(
               "SELECT 1 FROM poc_sport_activity_messages WHERE id_activite = %s",
-              engine, params=(id_activite,)
+              engine_staging, params=(id_activite,)
           )
 
           if msg_exist.empty:  # Si aucun message existant
@@ -654,7 +666,7 @@ tasks:
                       print(f"Message envoyé pour activité {id_activite} (tentative {attempt})")
                       
                       # Historisation du message dans la base uniquement si envoi réussi
-                      with engine.begin() as conn:
+                      with engine_staging.begin() as conn:
                           conn.execute(
                               text("INSERT INTO poc_sport_activity_messages (id_activite, message) VALUES (:id_activite, :message)"),
                               {"id_activite": id_activite, "message": message}
@@ -671,39 +683,60 @@ tasks:
           else:
               print(f"Message déjà envoyé pour activité {id_activite}, skip")  # Message déjà existant, ne pas renvoyer
 
-  - id: create_sport_activity_clean_table   # Tâche pour créer une table "propre" d'activités sportives
+  - id: create_sport_activity_clean_table_sql
     type: io.kestra.plugin.jdbc.postgresql.Queries
-    url: jdbc:postgresql://postgres:5432/kestra
-    username: kestra
-    password: k3str4
+    url: jdbc:postgresql://postgres:5432/poc_staging
+    username: "{{ envs.postgres_user }}"
+    password: "{{ envs.postgres_password }}"
     retry:
       type: constant
       maxAttempt: 3
       interval: PT15S
     sql: |
-      
       DROP TABLE IF EXISTS poc_sport_activity_clean;
 
-      CREATE TABLE poc_sport_activity_clean AS
+      CREATE TABLE poc_sport_activity_clean (
+        id_activite SERIAL PRIMARY KEY,
+        id_salarie INTEGER,
+        date_debut TIMESTAMP,
+        type_sport TEXT,
+        distance_m INTEGER,
+        duree_min INTEGER,
+        commentaire TEXT
+      );
+    
+  - id: populate_sport_activity_clean_table
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    retry:
+      type: constant
+      maxAttempt: 3
+      interval: PT15S
+    script: |
+      import pandas as pd
+      from sqlalchemy import create_engine
 
-      SELECT
-        id_activite,
-        id_salarie,
-        date_debut,
-        type_sport,
-        distance_m,
-        duree_min,
-        commentaire
+      # Connexions
+      engine_raw = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_raw")       # Lecture RAW
+      engine_staging = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_staging")  # Ecriture STAGING
 
-      FROM poc_sport_activity
+      # Lecture des données RAW
+      df = pd.read_sql("SELECT * FROM poc_sport_activity", engine_raw)
 
-      WHERE
-        id_salarie IS NOT NULL
-        AND type_sport IS NOT NULL
-        AND duree_min > 0
-        AND (distance_m IS NULL OR distance_m >= 0)
-        AND date_debut::date <= CURRENT_DATE
-        AND date_debut::date >= (CURRENT_DATE - INTERVAL '1 year')::date;
+      # Filtrage pour clean table
+      df_clean = df[
+          (df['id_salarie'].notnull()) &
+          (df['type_sport'].notnull()) &
+          (df['duree_min'] > 0) &
+          ((df['distance_m'].isnull()) | (df['distance_m'] >= 0)) &
+          (pd.to_datetime(df['date_debut']).dt.date <= pd.Timestamp.today().date()) &
+          (pd.to_datetime(df['date_debut']).dt.date >= (pd.Timestamp.today().date() - pd.Timedelta(days=365)))
+      ]
+
+      # Insertion dans STAGING
+      df_clean.to_sql("poc_sport_activity_clean", engine_staging, if_exists="append", index=False)
+      print(f"{len(df_clean)} lignes insérées dans poc_sport_activity_clean")
 
   - id: test_poc_sport_activity_clean
     type: io.kestra.plugin.scripts.python.Script
@@ -725,7 +758,7 @@ tasks:
       from dateutil.relativedelta import relativedelta
 
       def test_poc_sport_activity_clean():
-          engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
+          engine = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_staging")
           df = pd.read_sql("SELECT * FROM poc_sport_activity_clean", engine)
 
           today = datetime.now().date()
@@ -783,180 +816,169 @@ tasks:
       if result.returncode != 0:
           raise Exception("Le test pytest a échoué")
 
-  - id: create_fact_prime_sportive    # Tâche pour créer la table des primes sportives des salariés
-    type: io.kestra.plugin.jdbc.postgresql.Queries
-    url: jdbc:postgresql://postgres:5432/kestra
-    username: kestra
-    password: k3str4
-    retry:
-      type: constant
-      maxAttempt: 3
-      interval: PT15S
-    sql: |
-      /*
-      Cette task PostgreSQL crée la table des primes sportives poc_fact_prime_sportive.
-      Elle combine les données RH (poc_rh_raw) et les distances calculées (poc_employees_enriched) pour déterminer :
-      - eligibility : le salarié a-t-il rempli correctement sa déclaration ?
-      - montant de la prime : calculé en multipliant le salaire par le taux de prime défini dans poc_config_parameters.
-      Permet d’obtenir une table prête à être utilisée pour la paie ou le reporting.
-      */
-      
-      DROP TABLE IF EXISTS poc_fact_prime_sportive;
-
-      CREATE TABLE poc_fact_prime_sportive AS
-
-      SELECT
-        rh.id_salarie,
-        rh.salaire_brut,
-
-        CASE
-          WHEN emp.declaration_valide = TRUE THEN TRUE
-          ELSE FALSE
-        END AS eligible_prime,
-
-        CASE
-          WHEN emp.declaration_valide = TRUE
-          THEN rh.salaire_brut * (
-            SELECT value
-            FROM poc_config_parameters
-            WHERE param_name = 'prime_rate'
-          )
-          ELSE 0
-        END AS montant_prime
-
-      FROM poc_rh_raw rh
-
-      LEFT JOIN poc_employees_enriched emp
-        ON rh.id_salarie = emp.id_salarie;
-
-  - id: create_fact_bien_etre
-    type: io.kestra.plugin.jdbc.postgresql.Queries
-    url: jdbc:postgresql://postgres:5432/kestra
-    username: kestra
-    password: k3str4
-    retry:
-      type: constant
-      maxAttempt: 3
-      interval: PT15S
-    sql: |
-      /*
-      Cette task PostgreSQL crée la table des primes bien-être poc_fact_bien_etre.
-      Elle combine les données RH (poc_rh_raw) et les activités sportives nettoyées (poc_sport_activity_clean) pour déterminer :
-      - nb_activites : nombre d'activités sportives réalisées par le salarié
-      - eligible_bien_etre : le salarié a-t-il atteint le nombre minimum d'activités défini dans poc_config_parameters
-      Permet d’obtenir une table prête à être utilisée pour le reporting bien-être ou pour le calcul de primes associées.
-      */
-
-      DROP TABLE IF EXISTS poc_fact_bien_etre;
-
-      CREATE TABLE poc_fact_bien_etre AS
-
-      WITH activity_count AS (
-        SELECT
-          id_salarie,
-          COUNT(*) AS nb_activites
-        FROM poc_sport_activity_clean
-        GROUP BY id_salarie
-      )
-
-      SELECT
-        rh.id_salarie,
-
-        COALESCE(ac.nb_activites, 0) AS nb_activites,
-
-        CASE
-          WHEN COALESCE(ac.nb_activites, 0) >= (
-            SELECT value
-            FROM poc_config_parameters
-            WHERE param_name = 'min_activities'
-          )
-          THEN TRUE
-          ELSE FALSE
-        END AS eligible_bien_etre
-
-      FROM poc_rh_raw rh
-
-      LEFT JOIN activity_count ac
-        ON rh.id_salarie = ac.id_salarie;
-
-  - id: create_kpi_global
-    type: io.kestra.plugin.jdbc.postgresql.Queries
-    url: jdbc:postgresql://postgres:5432/kestra
-    username: kestra
-    password: k3str4
-    retry:
-      type: constant
-      maxAttempt: 3
-      interval: PT15S
-    sql: |
-      /*
-      Cette task PostgreSQL crée la table globale des KPI des salariés : poc_kpi_global.
-      Elle combine les informations RH, les distances domicile-travail, les primes sportives et les primes bien-être pour chaque salarié.
-      Colonnes principales :
-      - id_salarie, nom, prenom, salaire_brut : informations de base du salarié
-      - distance_km : distance domicile-travail issue de poc_employees_enriched
-      - eligible_prime, montant_prime : éligibilité et montant de la prime sportive
-      - nb_activites, eligible_bien_etre : nombre d'activités réalisées et éligibilité à la prime bien-être
-      Cette table sert à alimenter le reporting global.
-      */
-      
-      DROP TABLE IF EXISTS poc_kpi_global;
-
-      CREATE TABLE poc_kpi_global AS
-
-      SELECT
-        rh.id_salarie,
-        rh.nom,
-        rh.prenom,
-        rh.salaire_brut,
-
-        emp.distance_km,
-
-        prime.eligible_prime,
-        prime.montant_prime,
-
-        be.nb_activites,
-        be.eligible_bien_etre
-
-      FROM poc_rh_raw rh
-
-      LEFT JOIN poc_employees_enriched emp
-        ON rh.id_salarie = emp.id_salarie
-
-      LEFT JOIN poc_fact_prime_sportive prime
-        ON rh.id_salarie = prime.id_salarie
-
-      LEFT JOIN poc_fact_bien_etre be
-        ON rh.id_salarie = be.id_salarie;
-
-  - id: create_kpi_global_monitoring    # Tâche pour surveiller la table KPI globale
+  - id: create_fact_prime_sportive
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
+    retry:
+      type: constant
+      maxAttempt: 3
+      interval: PT15S
     script: |
       import pandas as pd
-      from sqlalchemy import create_engine
+      from sqlalchemy import create_engine, text
 
-      # Connexion à PostgreSQL
-      engine = create_engine("postgresql+psycopg2://kestra:k3str4@postgres:5432/kestra")
+      # Cette task PostgreSQL crée la table des primes sportives poc_fact_prime_sportive.
+      # Elle combine les données RH (poc_rh_raw) et les distances calculées (poc_employees_enriched) pour déterminer :
+      # - eligibility : le salarié a-t-il rempli correctement sa déclaration ?
+      # - montant de la prime : calculé en multipliant le salaire par le taux de prime défini dans poc_config_parameters.
+      # Permet d’obtenir une table prête à être utilisée pour la paie ou le reporting.
 
-      # Lecture de la table KPI global
-      df_kpi = pd.read_sql("SELECT * FROM poc_kpi_global", engine)
+      # Connexions aux différentes bases
+      engine_raw = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_raw")       # RH + config
+      engine_staging = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_staging") # employees_enriched
+      engine_mart = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_mart")      # Fact table
 
-      # Vérification qu'il y a des données
-      if len(df_kpi) == 0:
-          raise Exception("Aucune donnée dans le KPI global")   # Stop workflow si table vide
+      # Lecture des RH
+      rh = pd.read_sql("SELECT * FROM poc_rh_raw", engine_raw)
 
-      # Affichage dans les logs Kestra
-      print(f"{len(df_kpi)} salariés dans le KPI global")
+      # Lecture des distances enrichies
+      emp = pd.read_sql("SELECT * FROM poc_employees_enriched", engine_staging)
 
-      # Création d'un output Kestra pour monitoring / alertes
+      # Lecture des paramètres
+      params = pd.read_sql("SELECT param_name, value FROM poc_config_parameters", engine_raw)
+      param_dict = dict(zip(params["param_name"], params["value"]))
+      prime_rate = float(param_dict.get("prime_rate", 0))
+
+      # JOIN RH + Employees
+      df = rh.merge(emp[['id_salarie','declaration_valide']], on='id_salarie', how='left')
+
+      # Calcul des primes
+      df['eligible_prime'] = df['declaration_valide'].fillna(False)
+      df['montant_prime'] = df.apply(lambda row: row['salaire_brut']*prime_rate if row['eligible_prime'] else 0, axis=1)
+
+      # Sélection des colonnes finales
+      df_fact = df[['id_salarie','salaire_brut','eligible_prime','montant_prime']]
+
+      # Création de la table dans MART
+      with engine_mart.begin() as conn:
+          conn.execute(text("DROP TABLE IF EXISTS poc_fact_prime_sportive"))
+      df_fact.to_sql("poc_fact_prime_sportive", engine_mart, if_exists='replace', index=False)
+
+      print(f"{len(df_fact)} lignes insérées dans poc_fact_prime_sportive")
+
+  - id: create_fact_bien_etre
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    retry:
+      type: constant
+      maxAttempt: 3
+      interval: PT15S
+    script: |
+      import pandas as pd
+      from sqlalchemy import create_engine, text
+
+      # Cette task PostgreSQL crée la table des primes bien-être poc_fact_bien_etre.
+      # Elle combine les données RH (poc_rh_raw) et les activités sportives nettoyées (poc_sport_activity_clean) pour déterminer :
+      # - nb_activites : nombre d'activités sportives réalisées par le salarié
+      # - eligible_bien_etre : le salarié a-t-il atteint le nombre minimum d'activités défini dans poc_config_parameters
+      # Permet d’obtenir une table prête à être utilisée pour le reporting bien-être ou pour le calcul de primes associées.
+
+      # Connexions aux différentes bases
+      engine_raw = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_raw")        # RH + paramètres
+      engine_staging = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_staging")  # Activités sportives clean
+      engine_mart = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_mart")       # Fact table
+
+      # Lecture des RH
+      rh = pd.read_sql("SELECT * FROM poc_rh_raw", engine_raw)
+
+      # Lecture des activités sportives nettoyées
+      activities = pd.read_sql("SELECT * FROM poc_sport_activity_clean", engine_staging)
+
+      # Lecture des paramètres
+      params = pd.read_sql("SELECT param_name, value FROM poc_config_parameters", engine_raw)
+      param_dict = dict(zip(params["param_name"], params["value"]))
+      min_activities = int(param_dict.get("min_activities", 0))
+
+      # Comptage du nombre d'activités par salarié
+      activity_count = activities.groupby("id_salarie").size().reset_index(name="nb_activites")
+
+      # JOIN RH + compteur d'activités
+      df = rh.merge(activity_count, on="id_salarie", how="left")
+      df["nb_activites"] = df["nb_activites"].fillna(0).astype(int)
+
+      # Calcul de l'éligibilité bien-être
+      df["eligible_bien_etre"] = df["nb_activites"] >= min_activities
+
+      # Sélection des colonnes finales
+      df_fact = df[["id_salarie", "nb_activites", "eligible_bien_etre"]]
+
+      # Création de la table dans MART
+      with engine_mart.begin() as conn:
+          conn.execute(text("DROP TABLE IF EXISTS poc_fact_bien_etre"))
+      df_fact.to_sql("poc_fact_bien_etre", engine_mart, if_exists="replace", index=False)
+
+      print(f"{len(df_fact)} lignes insérées dans poc_fact_bien_etre")
+
+  - id: create_kpi_global
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    retry:
+      type: constant
+      maxAttempt: 3
+      interval: PT15S
+    script: |
+      import pandas as pd
+      from sqlalchemy import create_engine, text
       from kestra import Kestra
+
+      # Cette task PostgreSQL crée la table globale des KPI des salariés : poc_kpi_global.
+      # Elle combine les informations RH, les distances domicile-travail, les primes sportives et les primes bien-être pour chaque salarié.
+      # Colonnes principales :
+      # - id_salarie, nom, prenom, salaire_brut : informations de base du salarié
+      # - distance_km : distance domicile-travail issue de poc_employees_enriched
+      # - eligible_prime, montant_prime : éligibilité et montant de la prime sportive
+      # - nb_activites, eligible_bien_etre : nombre d'activités réalisées et éligibilité à la prime bien-être
+      # Cette table sert à alimenter le reporting global.
+
+      # Connexions aux différentes bases
+      engine_raw = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_raw")        # RH
+      engine_staging = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_staging")  # Employees enriched
+      engine_mart = create_engine("postgresql+psycopg2://{{ envs.postgres_user }}:{{ envs.postgres_password }}@postgres:5432/poc_mart")       # Fact tables + KPI
+
+      # Lecture des RH
+      rh = pd.read_sql("SELECT id_salarie, nom, prenom, salaire_brut FROM poc_rh_raw", engine_raw)
+
+      # Lecture des distances domicile-travail
+      emp = pd.read_sql("SELECT id_salarie, distance_km FROM poc_employees_enriched", engine_staging)
+
+      # Lecture des fact tables dans MART
+      prime = pd.read_sql("SELECT id_salarie, eligible_prime, montant_prime FROM poc_fact_prime_sportive", engine_mart)
+      be = pd.read_sql("SELECT id_salarie, nb_activites, eligible_bien_etre FROM poc_fact_bien_etre", engine_mart)
+
+      # Merge des tables pour obtenir le KPI global
+      df = rh.merge(emp, on='id_salarie', how='left') \
+            .merge(prime, on='id_salarie', how='left') \
+            .merge(be, on='id_salarie', how='left')
+
+      # Création de la table finale dans MART
+      with engine_mart.begin() as conn:
+          conn.execute(text("DROP TABLE IF EXISTS poc_kpi_global"))
+      df.to_sql("poc_kpi_global", engine_mart, if_exists="replace", index=False)
+
+      # Vérification données
+      if len(df) == 0:
+          raise Exception("Aucune donnée dans le KPI global")   # Stop workflow si table vide
+      print(f"{len(df)} lignes insérées dans poc_kpi_global")
+
+      # Output Kestra pour alertes / reporting
       Kestra.outputs({
-          "nb_kpi_rows": len(df_kpi)
+          "nb_kpi_rows": len(df)
       })
       
-  # MONITORING
+#   # MONITORING
 
   - id: log_final_summary   # Tâche pour afficher un résumé final dans les logs Kestra
     type: io.kestra.plugin.core.log.Log
@@ -965,12 +987,13 @@ tasks:
       - RH rows: {{ outputs.load_raw_tables.vars.rh_rows | default('N/A') }}
       - SPORT rows: {{ outputs.load_raw_tables.vars.sport_rows | default('N/A') }}
       - Activités générées: {{ outputs.consume_kafka_sport_activity.vars.nb_activities_kafka | default('N/A') }}
-      - Salariés KPI global: {{ outputs.create_kpi_global_monitoring.vars.nb_kpi_rows | default('N/A') }}
+      - Salariés KPI global: {{ outputs.create_kpi_global.vars.nb_kpi_rows | default('N/A') }}
 
 triggers:
   - id: daily_trigger
     type: io.kestra.core.models.triggers.types.Schedule   # Type de trigger : planification basée sur un calendrier (Schedule)
-    cron: "0 9 * * *"
+    cron: "50 7 * * *"
+    timezone: "Europe/Paris"
       # Expression CRON qui définit quand le pipeline doit s’exécuter automatiquement
       # Décodage :
       #   - 0 minute

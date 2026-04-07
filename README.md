@@ -141,16 +141,42 @@ Les Dockerfiles personnalisés installent Python 3 et les librairies nécessaire
 
 - La communication avec PostgreSQL.
 
+### Portabilité et sécurité
+
+- Tous les volumes utilisent des chemins **relatifs**
+- Les identifiants PostgreSQL sont injectés via le fichier `.env`
+- Le projet peut être exécuté sur **Windows, Mac et Linux sans modification**
+
+
 ## 7. Variables d’environnement
 
-Le projet utilise une clé API pour le calcul des distances et un webhook slack pour l'envoie des messages.
+Afin de sécuriser le projet et de le rendre exécutable sur n’importe quelle machine, toutes les informations sensibles (identifiants, mots de passe, clés API) sont externalisées dans un fichier `.env`.
 
-Ces informations peuvent être définies soit dans un fichier .env, soit dans les secrets de Kestra. Pour un POC, il est aussi possible de les mettre directement dans le code, mais cela n’est pas sécurisé pour un usage en production.
+### Fichier `.env`
 
-Vous devez créer un .env à la racine du projet avec :
+Vous devez créer un fichier `.env` à la racine du projet en vous basant sur le fichier `.env.example`.
 
-`ORS_API_KEY=*******`
-`SLACK_WEBHOOK=*******`
+Exemple :
+```bash
+POSTGRES_DB=kestra
+POSTGRES_USER=kestra
+POSTGRES_PASSWORD=ton_password
+
+ORS_API_KEY=ton_api_key
+SLACK_WEBHOOK=ton_webhook
+```
+
+### Bonnes pratiques
+
+- Ne **jamais versionner** le fichier `.env` (ajouté dans `.gitignore`)
+- Utiliser `.env.example` comme template
+- Possibilité d’utiliser les **secrets Kestra** en production
+
+### Utilisation dans le projet
+
+- Docker Compose injecte ces variables dans les conteneurs
+- Kestra les récupère via `envs`
+- Les scripts Python utilisent ces variables pour se connecter aux bases
 
 
 ## 8. Organisation des données
@@ -350,25 +376,43 @@ Les données finales permettent de visualiser :
 
 ## 17. Instructions pour lancer le workflow
 
-1. Lancer `docker-compose.yaml` qui se trouve dans le dossier kestra :
-!!! Attention avant de lancer cette commande assurer vous d'avoir lancer docker (linux) ou docker desktop (windows/macOs)
+1. Cloner le projet
+
+```bash
+git clone <repo>
+cd <repo>
+```
+2. Créer le fichier .env
+
+Utilisez le .env.example pour avoir la structure du .env
+
+**!!! Pour la clé API (ORS_API_KEY), vous pouvez en créer une sur le site de openrouteservice. Pour votre Slack webhook (SLACK_WEBHOOK) vous pouvez en créer un sur slack pour recevoir les message**
+
+Puis modifier les valeurs :
+
+- `PostgreSQL (user / password / db)`
+- `ORS_API_KEY`
+- `SLACK_WEBHOOK`
+
+3. Lancer `docker-compose.yaml` qui se trouve dans le dossier kestra :
+!!! Attention avant de lancer cette commande assurer vous d'avoir lancer **docker (linux) ou docker desktop (windows/macOs)**
 ```bash
 docker-compose up -d
 ```
 
 **A savoir** cette commande lance tout le projet, donc en cas de réexécution du projet, pensez à commenter le produceur dans docker-compose.yaml du dossier Kestra, pour ne pas avoir de nouvelles données sportives créées qui seront ajoutées aux anciennes.
 
-2. Vérifier que les conteneurs postgres (3 bases : RAW, STAGING, MART) et Kestra sont en ligne.
+4. Vérifier que les conteneurs postgres (3 bases : RAW, STAGING, MART) et Kestra sont en ligne.
 
-3. Accéder à l’interface Kestra sur http://localhost:8080.
+5. Accéder à l’interface Kestra sur http://localhost:8080.
 
-4. Importer le workflow **pipeline_sport_p12** dans **Kestra**. Vous le trouverez dans le fichier `code_kestra.yaml`
+6. Importer le workflow **pipeline_sport_p12** dans **Kestra**. Vous le trouverez dans le fichier `code_kestra.yaml`
 
-5. **!!! Pensez à mettre votre clé api dans un fichier .env à la racine du projet. Vous pouvez en créer une sur le site de openrouteservice. Ainsi que votre Slack webhook créer sur slack pour recevoir les message**
-
-6. Exécuter le workflow et suivre les logs pour validation.
+7. Exécuter le workflow et suivre les logs pour validation.
 
 ## Notes techniques
+
+Les connexions aux bases de données utilisent des variables d’environnement `(POSTGRES_USER, POSTGRES_PASSWORD)` afin de garantir la sécurité et la portabilité du projet.
 
 Les distances domicile-travail sont calculées avec OpenRouteService (API key nécessaire).
 

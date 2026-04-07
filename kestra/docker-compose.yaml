@@ -15,9 +15,9 @@ services:
       # - "5432:5432" # Port exposé sur la machine locale
       - "5433:5432" # Port exposé sur la machine locale (5433 pour éviter les conflits avec d'autres services)
     environment:
-      POSTGRES_DB: kestra # Nom de la base de données PostgreSQL
-      POSTGRES_USER: kestra # Nom d'utilisateur PostgreSQL
-      POSTGRES_PASSWORD: k3str4 # Mot de passe PostgreSQL
+      POSTGRES_DB: ${POSTGRES_DB} # Nom de la base de données PostgreSQL
+      POSTGRES_USER: ${POSTGRES_USER} # Nom d'utilisateur PostgreSQL
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD} # Mot de passe PostgreSQL
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"] # Vérifie si la base de données est prête
       interval: 30s # Intervalle de vérification
@@ -41,17 +41,21 @@ services:
       - kestra-data-projet12:/app/storage # Montage du volume persistant pour stocker les données Kestra
       - /var/run/docker.sock:/var/run/docker.sock # Montage du socket Docker pour accès aux conteneurs Docker
       - /tmp/kestra-wd:/tmp/kestra-wd # Montage du volume persistant pour stocker les données temporaires de Kestra
-      - C:/Users/zakar_2tvurct/Desktop/Formation_Data_Engineer/Projet_12/Projet_12/sport_data_solution:/data/sport_data_solution # Montage du volume persistant pour stocker les données de sport_data_solution
+      - ../sport_data_solution:/data/sport_data_solution # Montage du volume persistant pour stocker les données de sport_data_solution
     env_file:
-        - ../.env # Fichier .env contenant les variables d'environnement
+        - .env # Fichier .env contenant les variables d'environnement
     environment:
+      ENV_POSTGRES_USER: ${POSTGRES_USER}
+      ENV_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      ENV_POSTGRES_DB: ${POSTGRES_DB}
       KESTRA_CONFIGURATION: | # Configuration interne de Kestra en YAML inline
         datasources:
           postgres:
             url: jdbc:postgresql://postgres:5432/kestra # URL de connexion à la base de données PostgreSQL
             driverClassName: org.postgresql.Driver
-            username: kestra 
-            password: k3str4
+            username: ${POSTGRES_USER} 
+            password: ${POSTGRES_PASSWORD}
+            
         kestra:
           # server:
           #   basic-auth:
@@ -76,7 +80,7 @@ services:
       postgres:
         condition: service_started # Attend que PostgreSQL soit démarré avant de démarrer Kestra
 
-  # 🔴 REDPANDA
+  # REDPANDA
 
   redpanda-0: # Service de broker Kafka Redpanda (équivalent Kafka)
     image: docker.redpanda.com/redpandadata/redpanda:v25.3.4 # Image Docker de Redpanda version 25.3.4
@@ -132,7 +136,7 @@ services:
       - redpanda-0 # Attend que le broker Kafka soit démarré avant de démarrer le producer
       - postgres # Attend que PostgreSQL soit démarré avant de démarrer le producer
     env_file:
-      - ../.env # Fichier .env contenant les variables d'environnement
+      - .env # Fichier .env contenant les variables d'environnement
     volumes:
       - ../sport_data_solution:/data/sport_data_solution # Montage du volume persistant pour stocker les données de sport_data_solution
       - ../producer:/app # Montage du volume persistant pour stocker le code du producer
