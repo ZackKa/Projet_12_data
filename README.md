@@ -361,13 +361,13 @@ L’ancienne version est automatiquement :
 
 La task est **idempotente** et gère 3 cas :
 
-- ✅ **Première exécution**  
+- **Première exécution**  
   → insertion des paramètres
 
-- ✅ **Re-run avec mêmes valeurs**  
+- **Re-run avec mêmes valeurs**  
   → aucun changement (pas de duplication)
 
-- ✅ **Modification d’un paramètre**  
+- **Modification d’un paramètre**  
   → historisation automatique + nouvelle version
 
 ### Avantages
@@ -380,13 +380,13 @@ La task est **idempotente** et gère 3 cas :
 
 Le pipeline a été conçu pour être **rejouable plusieurs fois sans suppression des données critiques**.
 
-### 🔁 Rejouabilité
+### Rejouabilité
 
 - Les paramètres (`poc_config_parameters`) ne sont **jamais supprimés**
 - Les tasks sont **idempotentes**
 - Le pipeline peut être relancé sans créer d’incohérences
 
-### ⚠️ Tables réinitialisées volontairement (POC)
+### Tables réinitialisées volontairement (POC)
 
 Certaines tables sont recréées pour simplifier les démonstrations :
 
@@ -396,7 +396,7 @@ Certaines tables sont recréées pour simplifier les démonstrations :
 
 Cela permet de repartir de zéro lors d’une soutenance.
 
-### 🧹 Task optionnelle : rebuild_history
+### Task optionnelle : rebuild_history
 
 Une task optionnelle permet de vider les tables MART :
 
@@ -404,7 +404,7 @@ Une task optionnelle permet de vider les tables MART :
 - ne modifie pas les paramètres
 - ne supprime pas l’historique
 
-### 📊 Recalcul avec anciens paramètres
+### Recalcul avec anciens paramètres
 
 Le pipeline permet d’utiliser une version passée des paramètres :
 
